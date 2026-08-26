@@ -268,7 +268,7 @@ function Login({cfg,team,onLogin}){
       {/* Hack: real onKeyDown */}
       {err&&<p className="text-red-500 text-xs mb-3 text-center">{err}</p>}
       <button onClick={go} style={{background:G1}} className="w-full py-3 text-white rounded-xl font-bold text-sm">Sign In</button>
-      <p className="text-center text-xs text-gray-300 mt-4">Default admin password: <span className="font-mono">kyen2024</span></p>
+      <p className="text-center text-xs text-gray-300 mt-4">Default admin password hint: <span className="font-mono">kyen</span></p>
     </div>
   </div>;
 }

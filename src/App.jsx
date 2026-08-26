@@ -214,6 +214,7 @@ export default function App(){
   const addSku=async s=>{await supabase.from("skus").insert({...s,is_active:true});setSkus(p=>[...p,s]);};
   const deactivateSku=async sku=>{await supabase.from("skus").update({is_active:false}).eq("sku",sku);setSkus(p=>p.filter(s=>s.sku!==sku));};
   const addCustomer=async c=>{const{data}=await supabase.from("customers").insert(c).select().single();if(data)setCustomers(p=>[...p,data]);return data;};
+  const updateCustomer=async c=>{await supabase.from("customers").update(c).eq("id",c.id);setCustomers(p=>p.map(x=>x.id===c.id?{...x,...c}:x));};
   const addSales=async entries=>{await supabase.from("sales").insert(entries.map(saleTD));setMonthSales(p=>[...p,...entries]);};
   const deleteSale=async id=>{await supabase.from("sales").delete().eq("id",id);setMonthSales(p=>p.filter(s=>s.id!==id));};
   const addVisit=async v=>{await supabase.from("visits").insert(visitTD(v));setMonthVisits(p=>[...p,v]);};
@@ -244,7 +245,8 @@ export default function App(){
         {view==="log_sale"&&<LogSale user={user} cfg={cfg} skus={skus} customers={customers} onSave={async e=>{await addSales(e);setView("dashboard");}} onNewCustomer={addCustomer}/>}
         {view==="log_visits"&&<LogVisits user={user} customers={customers} onSave={async v=>{await addVisit(v);setView("dashboard");}} onNewCustomer={addCustomer}/>}
         {view==="all_sales"&&<AllSalesView sales={isAdmin?monthSales:mySales} customers={customers} team={team} onDelete={isAdmin?deleteSale:null} month={selMonth} year={selYear} skus={skus}/>}
-        {view==="customers"&&<CustomerList customers={customers} onAdd={addCustomer} monthSales={monthSales}/>}
+        {view==="visits_log"&&<VisitsLog visits={isAdmin?monthVisits:myVisits} customers={customers} team={team} isAdmin={isAdmin} month={selMonth} year={selYear}/>}
+        {view==="customers"&&<CustomerList customers={customers} onAdd={addCustomer} onEdit={isAdmin?updateCustomer:null} monthSales={monthSales}/>}
         {view==="visit_plan"&&<VisitPlanView user={user} isAdmin={isAdmin} visitPlans={myPlans} customers={customers} team={team} onAdd={addPlan} onStatus={updatePlanStatus} onDelete={deletePlan} onNewCustomer={addCustomer} selMonth={selMonth} selYear={selYear}/>}
         {view==="team"&&isAdmin&&<TeamMgmt team={team} onAdd={addMember} onRemove={removeMember}/>}
         {view==="skus"&&isAdmin&&<SKUManager skus={skus} onAdd={addSku} onDeactivate={deactivateSku}/>}
@@ -268,15 +270,15 @@ function Login({cfg,team,onLogin}){
       {/* Hack: real onKeyDown */}
       {err&&<p className="text-red-500 text-xs mb-3 text-center">{err}</p>}
       <button onClick={go} style={{background:G1}} className="w-full py-3 text-white rounded-xl font-bold text-sm">Sign In</button>
-      <p className="text-center text-xs text-gray-300 mt-4">Default admin password: <span className="font-mono">kyen2024</span></p>
+      <p className="text-center text-xs text-gray-300 mt-4">Default admin password hint: <span className="font-mono">kyen</span></p>
     </div>
   </div>;
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────
 function Sidebar({isAdmin,view,setView,user,onLogout}){
-  const repNav=[{id:"dashboard",l:"Dashboard",i:"📊"},{id:"log_sale",l:"Log a Sale",i:"🛒"},{id:"log_visits",l:"Log Visits",i:"🗺️"},{id:"visit_plan",l:"Visit Plan",i:"📅"},{id:"all_sales",l:"My Sales",i:"📋"},{id:"customers",l:"Customers",i:"🏪"}];
-  const admNav=[{id:"dashboard",l:"Dashboard",i:"📊"},{id:"all_sales",l:"All Sales",i:"📋"},{id:"customers",l:"Customers",i:"🏪"},{id:"visit_plan",l:"Visit Plans",i:"📅"},{id:"team",l:"Team",i:"👥"},{id:"skus",l:"Manage SKUs",i:"📦"},{id:"prices",l:"Prices",i:"💰"},{id:"targets_set",l:"Targets",i:"🎯"}];
+  const repNav=[{id:"dashboard",l:"Dashboard",i:"📊"},{id:"log_sale",l:"Log a Sale",i:"🛒"},{id:"log_visits",l:"Log Visits",i:"🗺️"},{id:"visits_log",l:"Visits History",i:"📍"},{id:"visit_plan",l:"Visit Plan",i:"📅"},{id:"all_sales",l:"My Sales",i:"📋"},{id:"customers",l:"Customers",i:"🏪"}];
+  const admNav=[{id:"dashboard",l:"Dashboard",i:"📊"},{id:"all_sales",l:"All Sales",i:"📋"},{id:"visits_log",l:"Visits Log",i:"📍"},{id:"customers",l:"Customers",i:"🏪"},{id:"visit_plan",l:"Visit Plans",i:"📅"},{id:"team",l:"Team",i:"👥"},{id:"skus",l:"Manage SKUs",i:"📦"},{id:"prices",l:"Prices",i:"💰"},{id:"targets_set",l:"Targets",i:"🎯"}];
   const nav=isAdmin?admNav:repNav;
   return <div style={{background:G1}} className="w-52 flex-shrink-0 flex flex-col">
     <div className="px-5 pt-5 pb-3 border-b border-green-800"><div className="text-white font-black tracking-widest">KYEN</div><div style={{color:AMB}} className="text-xs font-bold tracking-widest">SALES HUB</div></div>
@@ -573,28 +575,189 @@ function AllSalesView({sales,customers,team,onDelete,month,year,skus}){
 }
 
 // ── Customer List ─────────────────────────────────────────────────────────
-function CustomerList({customers,onAdd,monthSales}){
-  const [adding,setAdding]=useState(false); const [search,setSearch]=useState("");
-  const fl=customers.filter(c=>c.name.toLowerCase().includes(search.toLowerCase())||(c.city||"").toLowerCase().includes(search.toLowerCase())||(c.zone||"").toLowerCase().includes(search.toLowerCase()));
+// ── Visits Log ────────────────────────────────────────────────────────────
+function VisitsLog({visits,customers,team,isAdmin,month,year}){
+  const [filterRep,setFilterRep]=useState("all");
+  const [filterType,setFilterType]=useState("all");
+  const [search,setSearch]=useState("");
+
+  const getCust=id=>customers.find(c=>c.id===id);
+
+  let data=[...visits].sort((a,b)=>b.date.localeCompare(a.date));
+  if(filterRep!=="all") data=data.filter(v=>v.repId===filterRep);
+  if(filterType!=="all") data=data.filter(v=>v.visitType===filterType);
+  if(search.trim()) data=data.filter(v=>{
+    const c=getCust(v.customerId);
+    return (c?.name||"").toLowerCase().includes(search.toLowerCase())||
+           (c?.city||"").toLowerCase().includes(search.toLowerCase())||
+           (v.notes||"").toLowerCase().includes(search.toLowerCase());
+  });
+
+  const typeColor={"First Visit":G1,"Follow-up":G2,"Merchandising":AMB};
+  const typeIcon={"First Visit":"🆕","Follow-up":"🔄","Merchandising":"🏷️"};
+
+  const doExport=()=>dlXLSX([{name:"Visits",data:data.map(v=>{const c=getCust(v.customerId);return{
+    Date:v.date,Rep:v.repName,"Outlet Name":c?.name||"—","Outlet Type":c?.type||"—",
+    Address:c?.address||"—",City:c?.city||"—",Zone:c?.zone||"—",
+    "Contact Name":c?.contact_name||"—","Contact Phone":c?.contact_phone||"—",
+    "Visit Type":v.visitType,"Notes / Outcome":v.notes||"—",
+  };})}],`Kyen_Visits_${MFULL[month]}_${year}`);
+
+  return <div className="space-y-3">
+    <div className="flex items-center justify-between flex-wrap gap-2">
+      <div>
+        <div className="font-black text-gray-800">Visits Log <span className="font-normal text-sm text-gray-400">({data.length} visits)</span></div>
+        <div className="text-xs text-gray-400 mt-0.5">{MFULL[month]} {year}{isAdmin?" · All reps":""}</div>
+      </div>
+      <div className="flex gap-2 flex-wrap items-center">
+        {isAdmin&&<select value={filterRep} onChange={e=>setFilterRep(e.target.value)} className="border rounded-xl px-3 py-1.5 text-xs">
+          <option value="all">All Reps</option>{team.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>}
+        <select value={filterType} onChange={e=>setFilterType(e.target.value)} className="border rounded-xl px-3 py-1.5 text-xs">
+          <option value="all">All Visit Types</option>{["First Visit","Follow-up","Merchandising"].map(t=><option key={t}>{t}</option>)}
+        </select>
+        {data.length>0&&<button onClick={doExport} style={{background:G1}} className="px-3 py-1.5 text-white text-xs font-bold rounded-xl">⬇ Excel</button>}
+      </div>
+    </div>
+
+    {/* Search */}
+    <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by outlet name, city or notes…" className="w-full border rounded-xl p-2.5 text-sm outline-none"/>
+
+    {/* Summary strip */}
+    <div style={{background:GL}} className="rounded-xl px-4 py-2 flex gap-6 text-sm flex-wrap">
+      {["First Visit","Follow-up","Merchandising"].map(t=>{
+        const n=data.filter(v=>v.visitType===t).length;
+        return <div key={t}><span className="text-xs text-gray-500">{typeIcon[t]} {t}</span><div style={{color:typeColor[t]}} className="font-black text-sm">{n}</div></div>;
+      })}
+    </div>
+
+    {/* Visit cards */}
+    {data.length===0
+      ? <div className="bg-white rounded-xl shadow p-10 text-center text-gray-400 text-sm">No visits recorded for this period.</div>
+      : <div className="space-y-3">
+          {data.map(v=>{
+            const c=getCust(v.customerId);
+            return <div key={v.id} className="bg-white rounded-xl shadow p-4">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                {/* Left: outlet info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <div className="font-black text-gray-800 text-sm">{c?.name||"Unknown Outlet"}</div>
+                    {c&&<Badge color={c.type==="Wholesaler"?AMB:c.type==="Retail Store"?G2:G1}>{c.type||"—"}</Badge>}
+                    <span style={{background:typeColor[v.visitType]+"18",color:typeColor[v.visitType]}} className="text-xs font-bold px-2 py-0.5 rounded-full">
+                      {typeIcon[v.visitType]} {v.visitType}
+                    </span>
+                  </div>
+                  {/* Outlet details row */}
+                  <div className="flex gap-4 flex-wrap text-xs text-gray-500 mb-2">
+                    {c?.address&&<span>📍 {c.address}</span>}
+                    {c?.city&&<span>🏙️ {c.city}</span>}
+                    {c?.zone&&<span>🗺️ {c.zone}</span>}
+                    {c?.contact_phone&&<span>📞 {c.contact_phone}</span>}
+                    {c?.contact_name&&<span>👤 {c.contact_name}</span>}
+                  </div>
+                  {/* Notes */}
+                  {v.notes
+                    ? <div style={{background:GL}} className="rounded-lg px-3 py-2 text-xs text-gray-700">
+                        <span className="font-semibold text-gray-500 mr-1">Notes:</span>{v.notes}
+                      </div>
+                    : <div className="text-xs text-gray-300 italic">No notes recorded.</div>}
+                </div>
+                {/* Right: meta */}
+                <div className="text-right flex-shrink-0">
+                  <div className="text-xs font-semibold text-gray-600">{v.date}</div>
+                  {isAdmin&&<div className="text-xs text-gray-400 mt-0.5">{v.repName}</div>}
+                </div>
+              </div>
+            </div>;
+          })}
+        </div>}
+  </div>;
+}
+
+// ── Customer List (with admin edit) ───────────────────────────────────────
+function CustomerList({customers,onAdd,onEdit,monthSales}){
+  const [adding,setAdding]=useState(false);
+  const [editing,setEditing]=useState(null); // customer object being edited
+  const [search,setSearch]=useState("");
+  const [saved,setSaved]=useState(false);
+
+  const fl=customers.filter(c=>
+    c.name.toLowerCase().includes(search.toLowerCase())||
+    (c.city||"").toLowerCase().includes(search.toLowerCase())||
+    (c.zone||"").toLowerCase().includes(search.toLowerCase())
+  );
   const sc=id=>monthSales.filter(s=>s.customerId===id).length;
+
+  const handleEdit=async()=>{
+    if(!editing||!editing.name.trim()) return;
+    await onEdit(editing);
+    setSaved(true); setTimeout(()=>{setSaved(false);setEditing(null);},1200);
+  };
+
   return <div className="space-y-4">
-    <div className="flex items-center justify-between gap-2"><div className="font-black text-gray-800">Customers / Outlets <span className="font-normal text-sm text-gray-400">({customers.length})</span></div><Btn sm onClick={()=>setAdding(true)}>+ New Customer</Btn></div>
+    <div className="flex items-center justify-between gap-2">
+      <div className="font-black text-gray-800">Customers / Outlets <span className="font-normal text-sm text-gray-400">({customers.length})</span></div>
+      <Btn sm onClick={()=>setAdding(true)}>+ New Customer</Btn>
+    </div>
     <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by name, city or zone…" className="w-full border rounded-xl p-2.5 text-sm outline-none"/>
-    <div className="bg-white rounded-xl shadow overflow-x-auto"><table className="w-full text-xs min-w-max">
-      <thead><tr style={{background:G1}} className="text-white text-left"><th className="p-2.5">Name</th><th className="p-2.5">Type</th><th className="p-2.5">City</th><th className="p-2.5">Zone</th><th className="p-2.5">Address</th><th className="p-2.5">Contact</th><th className="p-2.5">Phone</th><th className="p-2.5 text-center">Sales</th></tr></thead>
-      <tbody>
-        {fl.length===0&&<tr><td colSpan={8} className="text-center p-8 text-gray-400">No customers yet. Add your first outlet above.</td></tr>}
-        {fl.map((c,i)=><tr key={c.id} style={{background:i%2===0?LG:"white"}}>
-          <td className="p-2.5 font-semibold">{c.name}</td>
-          <td className="p-2.5"><Badge color={c.type==="Wholesaler"?AMB:G1}>{c.type||"—"}</Badge></td>
-          <td className="p-2.5">{c.city||"—"}</td><td className="p-2.5">{c.zone||"—"}</td>
-          <td className="p-2.5">{c.address||"—"}</td><td className="p-2.5">{c.contact_name||"—"}</td>
-          <td className="p-2.5">{c.contact_phone||"—"}</td>
-          <td className="p-2.5 text-center font-bold" style={{color:G1}}>{sc(c.id)}</td>
-        </tr>)}
-      </tbody>
-    </table></div>
-    {adding&&<Modal title="New Customer" onClose={()=>setAdding(false)}><InlineCustomerForm onSave={async c=>{await onAdd(c);setAdding(false);}} onCancel={()=>setAdding(false)}/></Modal>}
+
+    <div className="bg-white rounded-xl shadow overflow-x-auto">
+      <table className="w-full text-xs min-w-max">
+        <thead><tr style={{background:G1}} className="text-white text-left">
+          <th className="p-2.5">Name</th><th className="p-2.5">Type</th>
+          <th className="p-2.5">City</th><th className="p-2.5">Zone</th>
+          <th className="p-2.5">Address</th><th className="p-2.5">Contact</th>
+          <th className="p-2.5">Phone</th><th className="p-2.5 text-center">Sales</th>
+          {onEdit&&<th className="p-2.5 text-center">Edit</th>}
+        </tr></thead>
+        <tbody>
+          {fl.length===0&&<tr><td colSpan={onEdit?9:8} className="text-center p-8 text-gray-400">No customers yet.</td></tr>}
+          {fl.map((c,i)=><tr key={c.id} style={{background:i%2===0?LG:"white"}}>
+            <td className="p-2.5 font-semibold">{c.name}</td>
+            <td className="p-2.5"><Badge color={c.type==="Wholesaler"?AMB:G1}>{c.type||"—"}</Badge></td>
+            <td className="p-2.5">{c.city||"—"}</td>
+            <td className="p-2.5">{c.zone||"—"}</td>
+            <td className="p-2.5">{c.address||"—"}</td>
+            <td className="p-2.5">{c.contact_name||"—"}</td>
+            <td className="p-2.5">{c.contact_phone||"—"}</td>
+            <td className="p-2.5 text-center font-bold" style={{color:G1}}>{sc(c.id)}</td>
+            {onEdit&&<td className="p-2.5 text-center">
+              <button onClick={()=>setEditing({...c})} style={{color:G2}} className="text-xs font-bold hover:underline">✏️ Edit</button>
+            </td>}
+          </tr>)}
+        </tbody>
+      </table>
+    </div>
+
+    {/* Add modal */}
+    {adding&&<Modal title="New Customer" onClose={()=>setAdding(false)}>
+      <InlineCustomerForm onSave={async c=>{await onAdd(c);setAdding(false);}} onCancel={()=>setAdding(false)}/>
+    </Modal>}
+
+    {/* Edit modal (admin only) */}
+    {editing&&<Modal title={`Edit — ${editing.name}`} onClose={()=>setEditing(null)}>
+      <div className="space-y-3">
+        <Inp label="Customer Name *" value={editing.name} onChange={v=>setEditing({...editing,name:v})}/>
+        <div className="grid grid-cols-2 gap-3">
+          <Sel label="Type" value={editing.type||"Supermarket"} onChange={v=>setEditing({...editing,type:v})}>
+            {["Supermarket","Retail Store","Wholesaler"].map(t=><option key={t}>{t}</option>)}
+          </Sel>
+          <Sel label="Zone" value={editing.zone||"South South"} onChange={v=>setEditing({...editing,zone:v})}>
+            {["South South","South East","South West","North Central","North East","North West","FCT"].map(z=><option key={z}>{z}</option>)}
+          </Sel>
+          <Inp label="City" value={editing.city||""} onChange={v=>setEditing({...editing,city:v})} placeholder="e.g. Port Harcourt"/>
+          <Inp label="Address" value={editing.address||""} onChange={v=>setEditing({...editing,address:v})} placeholder="Street / area"/>
+          <Inp label="Contact Name" value={editing.contact_name||""} onChange={v=>setEditing({...editing,contact_name:v})}/>
+          <Inp label="Contact Phone" value={editing.contact_phone||""} type="tel" onChange={v=>setEditing({...editing,contact_phone:v})}/>
+        </div>
+        {saved&&<p style={{color:G1}} className="text-xs font-bold text-center">✓ Saved!</p>}
+        <div className="flex gap-2 pt-1">
+          <Btn onClick={handleEdit} disabled={!editing.name.trim()||saved}>{saved?"✓ Saved!":"Save Changes"}</Btn>
+          <Btn onClick={()=>setEditing(null)} outline color="#999">Cancel</Btn>
+        </div>
+      </div>
+    </Modal>}
   </div>;
 }
 
