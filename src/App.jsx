@@ -127,7 +127,7 @@ function CustomerSelector({customers,value,onChange,onNewCustomer,label="Custome
 }
 
 function InlineCustomerForm({onSave,onCancel,initial={}}){
-  const [f,setF]=useState({name:"",type:"Supermarket",address:"",contactName:"",contactPhone:"",city:"",zone:"South South",...initial});
+  const [f,setF]=useState({name:"",type:"Supermarket",address:"",contact_name:"",contact_phone:"",city:"",zone:"South South",...initial});
   const upd=k=>v=>setF(p=>({...p,[k]:v}));
   const valid=f.name.trim()&&f.city.trim();
   return <div style={{background:GL}} className="rounded-xl p-4 space-y-3">
@@ -138,8 +138,8 @@ function InlineCustomerForm({onSave,onCancel,initial={}}){
       <Sel label="Zone" value={f.zone} onChange={upd("zone")}>{ZONES.map(z=><option key={z}>{z}</option>)}</Sel>
       <Inp label="City *" value={f.city} onChange={upd("city")} placeholder="e.g. Port Harcourt"/>
       <Inp label="Address" value={f.address} onChange={upd("address")} placeholder="Street / area"/>
-      <Inp label="Contact Name" value={f.contactName} onChange={upd("contactName")}/>
-      <Inp label="Contact Phone" type="tel" value={f.contactPhone} onChange={upd("contactPhone")}/>
+      <Inp label="Contact Name" value={f.contact_name} onChange={upd("contact_name")}/>
+      <Inp label="Contact Phone" type="tel" value={f.contact_phone} onChange={upd("contact_phone")}/>
     </div>
     <div className="flex gap-2 pt-1">
       <Btn onClick={()=>onSave({id:uid(),...f})} disabled={!valid} sm>Save Customer</Btn>
