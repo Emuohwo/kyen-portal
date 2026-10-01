@@ -2,185 +2,157 @@
 -- KYEN PRODUCTS — Sales Hub Schema v2
 -- Run this full file in Supabase → SQL Editor → Run
 -- Safe to re-run: uses IF NOT EXISTS and ON CONFLICT
--- Naming follows SQL 1 (camelCase for multi-word columns)
 -- ============================================================
 
-
--- ============================================================
 -- 1. Config
--- ============================================================
-
 create table if not exists config (
-    id integer primary key default 1,
-    admin_password text not null default 'kyen2024',
-    visit_benchmark integer not null default 5,
-    prices jsonb not null default '{}'
+  id               integer primary key default 1,
+  admin_password   text    not null default 'kyen2024',
+  visit_benchmark  integer not null default 5,
+  prices           jsonb   not null default '{}'
 );
+insert into config (id) values (1) on conflict (id) do nothing;
 
-insert into config (id)
-values (1)
-on conflict (id) do nothing;
-
-
--- ============================================================
 -- 2. Team members
--- ============================================================
-
 create table if not exists team (
-    id text primary key,
-    name text not null,
-    username text not null unique,
-    password text not null,
-    created_at timestamptz default now()
+  id          text primary key,
+  name        text not null,
+  username    text not null unique,
+  password    text not null,
+  last_login  timestamptz,
+  created_at  timestamptz default now()
 );
+-- If upgrading an existing database, run this line separately:
+-- alter table team add column if not exists last_login timestamptz;
 
-
--- ============================================================
--- 3. Dynamic SKUs
--- ============================================================
-
+-- 3. Dynamic SKUs (seeded from app on first load)
 create table if not exists skus (
-    sku text primary key,
-    name text not null,
-    cat text not null,
-    is_active boolean default true,
-    sort_order integer default 99,
-    created_at timestamptz default now()
+  sku         text primary key,
+  name        text not null,
+  cat         text not null,
+  is_active   boolean default true,
+  sort_order  integer default 99,
+  created_at  timestamptz default now()
 );
 
-
--- ============================================================
 -- 4. Customers / Outlets
--- ============================================================
-
 create table if not exists customers (
-    id text primary key,
-    name text not null,
-    type text,
-    address text,
-    "contactName" text,
-    "contactPhone" text,
-    city text,
-    zone text,
-    "createdBy" text,
-    "createdAt" timestamptz default now()
+  id            text primary key,
+  name          text not null,
+  type          text,           -- Supermarket | Retail Store | Wholesaler
+  address       text,
+  contact_name  text,
+  contact_phone text,
+  city          text,
+  zone          text,
+  created_by    text,
+  created_at    timestamptz default now()
 );
+create index if not exists customers_name_idx on customers (name);
 
-create index if not exists customers_name_idx
-on customers (name);
-
-
--- ============================================================
 -- 5. Sales transactions
--- ============================================================
-
 create table if not exists sales (
-    id text primary key,
-    "repId" text,
-    "repName" text,
-    date date not null,
-    channel text,
-    "customerId" text references customers(id) on delete set null,
-    "customerName" text,
-    sku text,
-    qty numeric,
-    price numeric,
-    amount numeric,
-    "createdAt" timestamptz default now()
+  id            text primary key,
+  rep_id        text,
+  rep_name      text,
+  date          date not null,
+  channel       text,
+  customer_id   text references customers(id) on delete set null,
+  customer_name text,
+  sku           text,
+  qty           numeric,
+  price         numeric,
+  discount_pct  numeric default 0,
+  payment_type  text default 'Cash',
+  amount        numeric,
+  created_at    timestamptz default now()
 );
+-- If upgrading an existing database, run this line separately:
+-- ── Migrations for EXISTING databases — run each line once in Supabase SQL Editor ──
+-- alter table sales add column if not exists discount_pct  numeric default 0;
+-- alter table sales add column if not exists payment_type  text default 'Cash';
+-- alter table team  add column if not exists last_login    timestamptz;
+create index if not exists sales_date_idx   on sales (date);
+create index if not exists sales_rep_idx    on sales (rep_id);
+create index if not exists sales_cust_idx   on sales (customer_id);
 
-create index if not exists sales_date_idx
-on sales (date);
-
-create index if not exists sales_rep_idx
-on sales ("repId");
-
-create index if not exists sales_cust_idx
-on sales ("customerId");
-
-
--- ============================================================
 -- 6. Outlet visits
--- ============================================================
-
 create table if not exists visits (
-    id text primary key,
-    "repId" text,
-    "repName" text,
-    date date not null,
-    "customerId" text references customers(id) on delete set null,
-    "visitType" text default 'First Visit',
-    notes text,
-    "createdAt" timestamptz default now()
+  id           text primary key,
+  rep_id       text,
+  rep_name     text,
+  date         date not null,
+  customer_id  text references customers(id) on delete set null,
+  visit_type   text default 'First Visit',  -- First Visit | Follow-up | Merchandising
+  notes        text,
+  created_at   timestamptz default now()
 );
+create index if not exists visits_date_idx on visits (date);
+create index if not exists visits_rep_idx  on visits (rep_id);
+create index if not exists visits_cust_idx on visits (customer_id);
 
-create index if not exists visits_date_idx
-on visits (date);
-
-create index if not exists visits_rep_idx
-on visits ("repId");
-
-create index if not exists visits_cust_idx
-on visits ("customerId");
-
-
--- ============================================================
--- 7. Monthly targets
--- ============================================================
-
+-- 7. Monthly targets (per-rep, per-SKU volume + overall value + visits)
 create table if not exists targets (
-    id text primary key,
-    "repId" text not null,
-    year integer not null,
-    month integer not null,
-    "valueNgn" numeric default 0,
-    "visitsTarget" integer default 0,
-    "skuTargets" jsonb default '{}',
-    unique ("repId", year, month)
+  id              text primary key,   -- repId_year_month
+  rep_id          text not null,
+  year            integer not null,
+  month           integer not null,
+  value_ngn       numeric default 0,
+  visits_target   integer default 0,
+  sku_targets     jsonb default '{}', -- { [sku]: targetQty }
+  unique (rep_id, year, month)
 );
 
-
--- ============================================================
 -- 8. Visit plans
--- ============================================================
-
 create table if not exists visit_plans (
-    id text primary key,
-    "repId" text,
-    "repName" text,
-    "plannedDate" date not null,
-    "customerId" text references customers(id) on delete set null,
-    "customerName" text,
-    "visitType" text default 'First Visit',
-    notes text,
-    status text default 'planned'
+  id            text primary key,
+  rep_id        text,
+  rep_name      text,
+  planned_date  date not null,
+  customer_id   text references customers(id) on delete set null,
+  customer_name text,
+  visit_type    text default 'First Visit',
+  notes         text,
+  status        text default 'planned',  -- planned | completed | cancelled
+  created_at    timestamptz default now()
 );
+create index if not exists vplans_date_idx on visit_plans (planned_date);
+create index if not exists vplans_rep_idx  on visit_plans (rep_id);
 
-create index if not exists vplans_date_idx
-on visit_plans ("plannedDate");
+-- 9. Returns and refunds
+create table if not exists returns (
+  id            text primary key,
+  sale_id       text references sales(id) on delete set null,
+  rep_id        text,
+  rep_name      text,
+  date          date not null,
+  customer_id   text references customers(id) on delete set null,
+  customer_name text,
+  sku           text,
+  qty           numeric,
+  price         numeric,
+  amount        numeric,
+  reason        text,
+  return_type   text default 'Full Return',
+  created_at    timestamptz default now()
+);
+create index if not exists returns_date_idx on returns (date);
+create index if not exists returns_rep_idx  on returns (rep_id);
+create index if not exists returns_cust_idx on returns (customer_id);
 
-create index if not exists vplans_rep_idx
-on visit_plans ("repId");
+-- Disable RLS for now (simple password auth)
+alter table config       disable row level security;
+alter table team         disable row level security;
+alter table skus         disable row level security;
+alter table customers    disable row level security;
+alter table sales        disable row level security;
+alter table visits       disable row level security;
+alter table targets      disable row level security;
+alter table visit_plans  disable row level security;
+alter table returns      disable row level security;
 
-
--- ============================================================
--- 9. Disable RLS for now
--- ============================================================
-
-alter table config disable row level security;
-alter table team disable row level security;
-alter table skus disable row level security;
-alter table customers disable row level security;
-alter table sales disable row level security;
-alter table visits disable row level security;
-alter table targets disable row level security;
-alter table visit_plans disable row level security;
-
-
--- ============================================================
--- 10. Enable Realtime on key tables
--- ============================================================
-
+-- Enable Realtime on key tables
 alter publication supabase_realtime add table sales;
 alter publication supabase_realtime add table visits;
 alter publication supabase_realtime add table visit_plans;
+alter publication supabase_realtime add table returns;

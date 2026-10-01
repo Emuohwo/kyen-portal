@@ -26,13 +26,15 @@ const DEFAULT_SKUS = [
   { sku:"KYN-C/DF 500g CUP",      name:"C&D Flakes 500g Cup",         cat:"C&D Flakes",   sort_order:12 },
 ];
 
-const CHANNELS    = ["Supermarket","Retail Store","Wholesaler"];
+const G1="#1A5C38"; const G2="#2E7D52"; const G3="#4CAF7D";
+const CHANNELS     = ["Supermarket","Retail Store","Wholesaler","End User"];
+const PAYMENT_TYPES= ["Cash","Credit","Bank Transfer"];
+const PAY_COL      = {Cash:G1,Credit:"#e74c3c","Bank Transfer":"#2980B9"};
 const VISIT_TYPES = ["First Visit","Follow-up","Merchandising"];
 const ZONES       = ["South South","South East","South West","North Central","North East","North West","FCT"];
 const MFULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAYS  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
-const G1="#1A5C38"; const G2="#2E7D52"; const G3="#4CAF7D";
 const AMB="#F4A900"; const GL="#D6EAD8"; const LG="#F7F9F7";
 const PIE=[G1,G2,G3,AMB,"#E67E22","#8E44AD","#2980B9","#E74C3C"];
 const STATUS_COL={ planned:AMB, completed:G1, cancelled:"#e74c3c" };
@@ -43,14 +45,16 @@ const pct   = (a,b)=> b>0?Math.min(Math.round(a/b*100),999):0;
 const uid   = ()  => Math.random().toString(36).slice(2,11);
 const isoD  = d   => d.toISOString().split("T")[0];
 const mRange= (y,m)=>({ start:`${y}-${String(m+1).padStart(2,"0")}-01`, end:isoD(new Date(y,m+1,0)) });
-const getP  = (prices,sku,ch)=>{ const p=prices?.[sku]; if(!p) return 0; return typeof p==="object"?(ch==="Wholesaler"?(p.wholesale||0):(p.retail||0)):Number(p); };
-const normPx= (raw,skus)=>{ const o={}; skus.forEach(s=>{ const p=raw?.[s.sku]; o[s.sku]=p&&typeof p==="object"?{retail:p.retail||0,wholesale:p.wholesale||0}:{retail:Number(p)||0,wholesale:Number(p)||0}; }); return o; };
+const getP  = (prices,sku,ch)=>{ const p=prices?.[sku]; if(!p) return 0; return typeof p==="object"?(ch==="Wholesaler"?(p.wholesale||0):ch==="End User"?(p.end_user||0):(p.retail||0)):Number(p); };
+const normPx= (raw,skus)=>{ const o={}; skus.forEach(s=>{ const p=raw?.[s.sku]; o[s.sku]=p&&typeof p==="object"?{retail:p.retail||0,wholesale:p.wholesale||0,end_user:p.end_user||0}:{retail:Number(p)||0,wholesale:Number(p)||0,end_user:Number(p)||0}; }); return o; };
 
 // DB converters
 const cfgFD =(r,sk)=>({ adminPassword:r?.admin_password||"kyen2024", visitBenchmark:r?.visit_benchmark||5, prices:normPx(r?.prices,sk) });
 const cfgTD = c=>({ id:1, admin_password:c.adminPassword, visit_benchmark:c.visitBenchmark, prices:c.prices });
-const saleFD= r=>({ id:r.id,repId:r.rep_id,repName:r.rep_name,date:r.date,channel:r.channel,customerId:r.customer_id,customerName:r.customer_name,sku:r.sku,qty:r.qty,price:r.price,amount:r.amount });
-const saleTD= s=>({ id:s.id,rep_id:s.repId,rep_name:s.repName,date:s.date,channel:s.channel,customer_id:s.customerId||null,customer_name:s.customerName||null,sku:s.sku,qty:s.qty,price:s.price,amount:s.amount });
+const saleFD= r=>({ id:r.id,repId:r.rep_id,repName:r.rep_name,date:r.date,channel:r.channel,customerId:r.customer_id,customerName:r.customer_name,sku:r.sku,qty:r.qty,price:r.price,discountPct:r.discount_pct||0,paymentType:r.payment_type||"Cash",amount:r.amount });
+const saleTD= s=>({ id:s.id,rep_id:s.repId,rep_name:s.repName,date:s.date,channel:s.channel,customer_id:s.customerId||null,customer_name:s.customerName||null,sku:s.sku,qty:s.qty,price:s.price,discount_pct:s.discountPct||0,payment_type:s.paymentType||"Cash",amount:s.amount });
+const retFD = r=>({ id:r.id,saleId:r.sale_id||null,repId:r.rep_id,repName:r.rep_name,date:r.date,customerId:r.customer_id,customerName:r.customer_name,sku:r.sku,qty:r.qty,price:r.price,amount:r.amount,reason:r.reason||"",returnType:r.return_type||"Full Return" });
+const retTD = r=>({ id:r.id,sale_id:r.saleId||null,rep_id:r.repId,rep_name:r.repName,date:r.date,customer_id:r.customerId||null,customer_name:r.customerName||null,sku:r.sku,qty:r.qty,price:r.price,amount:r.amount,reason:r.reason||"",return_type:r.returnType||"Full Return" });
 const visitFD=r=>({ id:r.id,repId:r.rep_id,repName:r.rep_name,date:r.date,customerId:r.customer_id,visitType:r.visit_type,notes:r.notes });
 const visitTD=v=>({ id:v.id,rep_id:v.repId,rep_name:v.repName,date:v.date,customer_id:v.customerId||null,visit_type:v.visitType,notes:v.notes||"" });
 const planFD =r=>({ id:r.id,repId:r.rep_id,repName:r.rep_name,plannedDate:r.planned_date,customerId:r.customer_id,customerName:r.customer_name,visitType:r.visit_type,notes:r.notes,status:r.status });
@@ -153,14 +157,26 @@ export default function App(){
   const [loaded,setLoaded]=useState(false); const [user,setUser]=useState(null); const [view,setView]=useState("dashboard");
   const [selMonth,setSelMonth]=useState(new Date().getMonth()); const [selYear,setSelYear]=useState(new Date().getFullYear());
   const [fetching,setFetching]=useState(false);
+  const [isMobile,setIsMobile]=useState(()=>window.innerWidth<768);
   const [cfg,setCfg]=useState({adminPassword:"kyen2024",visitBenchmark:5,prices:{}});
   const [team,setTeam]=useState([]); const [skus,setSkus]=useState(DEFAULT_SKUS);
   const [customers,setCustomers]=useState([]); const [targets,setTargets]=useState({});
   const [monthSales,setMonthSales]=useState([]); const [monthVisits,setMonthVisits]=useState([]);
-  const [visitPlans,setVisitPlans]=useState([]);
+  const [visitPlans,setVisitPlans]=useState([]); const [monthReturns,setMonthReturns]=useState([]);
+
+  useEffect(()=>{
+    const handler=()=>setIsMobile(window.innerWidth<768);
+    window.addEventListener("resize",handler);
+    return ()=>window.removeEventListener("resize",handler);
+  },[]);
 
   useEffect(()=>{
     (async()=>{
+      // Always upsert default SKUs first — ensures they survive any re-deployment
+      await supabase.from("skus").upsert(
+        DEFAULT_SKUS.map(s=>({...s,is_active:true})),
+        {onConflict:"sku",ignoreDuplicates:true}
+      );
       const [cfgR,teamR,skuR,custR,tgtR]=await Promise.all([
         supabase.from("config").select("*").eq("id",1).single(),
         supabase.from("team").select("*").order("name"),
@@ -168,8 +184,7 @@ export default function App(){
         supabase.from("customers").select("*").order("name"),
         supabase.from("targets").select("*"),
       ]);
-      let activeSkus=skuR.data?.length?skuR.data:DEFAULT_SKUS;
-      if(!skuR.data?.length) await supabase.from("skus").insert(DEFAULT_SKUS.map(s=>({...s,is_active:true})));
+      const activeSkus=skuR.data?.length?skuR.data:DEFAULT_SKUS;
       setSkus(activeSkus);
       if(cfgR.data) setCfg(cfgFD(cfgR.data,activeSkus));
       if(teamR.data) setTeam(teamR.data);
@@ -182,14 +197,16 @@ export default function App(){
   const fetchMonth=useCallback(async(month,year)=>{
     setFetching(true);
     const {start,end}=mRange(year,month);
-    const [sR,vR,pR]=await Promise.all([
+    const [sR,vR,pR,rR]=await Promise.all([
       supabase.from("sales").select("*").gte("date",start).lte("date",end).order("date"),
       supabase.from("visits").select("*").gte("date",start).lte("date",end).order("date"),
       supabase.from("visit_plans").select("*").gte("planned_date",start).lte("planned_date",end).order("planned_date"),
+      supabase.from("returns").select("*").gte("date",start).lte("date",end).order("date"),
     ]);
     setMonthSales((sR.data||[]).map(saleFD));
     setMonthVisits((vR.data||[]).map(visitFD));
     setVisitPlans((pR.data||[]).map(planFD));
+    setMonthReturns((rR.data||[]).map(retFD));
     setFetching(false);
   },[]);
 
@@ -202,6 +219,7 @@ export default function App(){
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"sales"},({new:r})=>{ if(r.date>=start&&r.date<=end) setMonthSales(p=>p.find(x=>x.id===r.id)?p:[...p,saleFD(r)]); })
       .on("postgres_changes",{event:"DELETE",schema:"public",table:"sales"},({old:r})=>setMonthSales(p=>p.filter(s=>s.id!==r.id)))
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"visits"},({new:r})=>{ if(r.date>=start&&r.date<=end) setMonthVisits(p=>p.find(x=>x.id===r.id)?p:[...p,visitFD(r)]); })
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"returns"},({new:r})=>{ if(r.date>=start&&r.date<=end) setMonthReturns(p=>p.find(x=>x.id===r.id)?p:[...p,retFD(r)]); })
       .on("postgres_changes",{event:"*",schema:"public",table:"visit_plans"},()=>fetchMonth(selMonth,selYear))
       .subscribe();
     return ()=>supabase.removeChannel(ch);
@@ -215,6 +233,14 @@ export default function App(){
   const deactivateSku=async sku=>{await supabase.from("skus").update({is_active:false}).eq("sku",sku);setSkus(p=>p.filter(s=>s.sku!==sku));};
   const addCustomer=async c=>{const{data}=await supabase.from("customers").insert(c).select().single();if(data)setCustomers(p=>[...p,data]);return data;};
   const updateCustomer=async c=>{await supabase.from("customers").update(c).eq("id",c.id);setCustomers(p=>p.map(x=>x.id===c.id?{...x,...c}:x));};
+  const fetchCustHistory=async id=>{
+    const[sR,rR]=await Promise.all([
+      supabase.from("sales").select("*").eq("customer_id",id).order("date",{ascending:false}),
+      supabase.from("returns").select("*").eq("customer_id",id).order("date",{ascending:false}),
+    ]);
+    return{sales:(sR.data||[]).map(saleFD),returns:(rR.data||[]).map(retFD)};
+  };
+  const addReturn=async r=>{await supabase.from("returns").insert(retTD(r));setMonthReturns(p=>[...p,r]);};
   const addSales=async entries=>{await supabase.from("sales").insert(entries.map(saleTD));setMonthSales(p=>[...p,...entries]);};
   const deleteSale=async id=>{await supabase.from("sales").delete().eq("id",id);setMonthSales(p=>p.filter(s=>s.id!==id));};
   const addVisit=async v=>{await supabase.from("visits").insert(visitTD(v));setMonthVisits(p=>[...p,v]);};
@@ -228,7 +254,15 @@ export default function App(){
   };
 
   if(!loaded) return <div style={{background:G1}} className="flex items-center justify-center h-screen"><div className="text-center"><div className="text-white text-2xl font-black tracking-widest mb-2">KYEN</div><div style={{color:AMB}} className="text-sm animate-pulse">Loading…</div></div></div>;
-  if(!user) return <Login cfg={cfg} team={team} onLogin={u=>{setUser(u);setView("dashboard");}}/>;
+  if(!user) return <Login cfg={cfg} team={team} onLogin={async u=>{
+    setUser(u);
+    setView("dashboard");
+    if(u.role==="rep"){
+      const now=new Date().toISOString();
+      await supabase.from("team").update({last_login:now}).eq("id",u.id);
+      setTeam(t=>t.map(m=>m.id===u.id?{...m,last_login:now}:m));
+    }
+  }}/>;
 
   const isAdmin=user.role==="admin";
   const mySales =isAdmin?monthSales:monthSales.filter(s=>s.repId===user.id);
@@ -236,24 +270,36 @@ export default function App(){
   const myPlans =isAdmin?visitPlans:visitPlans.filter(p=>p.repId===user.id);
 
   return <div className="flex h-screen bg-gray-100 overflow-hidden" style={{fontFamily:"Inter,system-ui,sans-serif"}}>
-    <Sidebar isAdmin={isAdmin} view={view} setView={setView} user={user} onLogout={()=>{setUser(null);setView("dashboard");}}/>
+    {/* Sidebar — desktop only */}
+    {!isMobile&&<Sidebar isAdmin={isAdmin} view={view} setView={setView} user={user} onLogout={()=>{setUser(null);setView("dashboard");}}/>}
+
     <div className="flex-1 flex flex-col overflow-hidden">
-      <TopBar selMonth={selMonth} setSelMonth={setSelMonth} selYear={selYear} setSelYear={setSelYear} fetching={fetching}/>
-      <main className="flex-1 overflow-auto p-4 pb-12">
-        {view==="dashboard"&&isAdmin&&<AdminDash monthSales={monthSales} monthVisits={monthVisits} team={team} targets={targets} selMonth={selMonth} selYear={selYear} skus={skus}/>}
-        {view==="dashboard"&&!isAdmin&&<RepDash user={user} monthSales={mySales} monthVisits={myVisits} targets={targets} selMonth={selMonth} selYear={selYear} skus={skus}/>}
+      <TopBar selMonth={selMonth} setSelMonth={setSelMonth} selYear={selYear} setSelYear={setSelYear} fetching={fetching} isMobile={isMobile}/>
+      <main className="flex-1 overflow-auto p-3 pb-24">
+        {view==="dashboard"&&isAdmin&&<AdminDash monthSales={monthSales} monthVisits={monthVisits} monthReturns={monthReturns} team={team} targets={targets} selMonth={selMonth} selYear={selYear} skus={skus}/>}
+        {view==="dashboard"&&!isAdmin&&<RepDash user={user} monthSales={mySales} monthVisits={myVisits} monthReturns={monthReturns.filter(r=>r.repId===user.id)} targets={targets} selMonth={selMonth} selYear={selYear} skus={skus}/>}
         {view==="log_sale"&&<LogSale user={user} cfg={cfg} skus={skus} customers={customers} onSave={async e=>{await addSales(e);setView("dashboard");}} onNewCustomer={addCustomer}/>}
         {view==="log_visits"&&<LogVisits user={user} customers={customers} onSave={async v=>{await addVisit(v);setView("dashboard");}} onNewCustomer={addCustomer}/>}
-        {view==="all_sales"&&<AllSalesView sales={isAdmin?monthSales:mySales} customers={customers} team={team} onDelete={isAdmin?deleteSale:null} month={selMonth} year={selYear} skus={skus}/>}
+        {view==="all_sales"&&<AllSalesView sales={isAdmin?monthSales:mySales} returns={isAdmin?monthReturns:monthReturns.filter(r=>r.repId===user.id)} customers={customers} team={team} onDelete={isAdmin?deleteSale:null} onAddReturn={addReturn} user={user} month={selMonth} year={selYear} skus={skus}/>}
         {view==="visits_log"&&<VisitsLog visits={isAdmin?monthVisits:myVisits} customers={customers} team={team} isAdmin={isAdmin} month={selMonth} year={selYear}/>}
-        {view==="customers"&&<CustomerList customers={customers} onAdd={addCustomer} onEdit={isAdmin?updateCustomer:null} monthSales={monthSales}/>}
-        {view==="visit_plan"&&<VisitPlanView user={user} isAdmin={isAdmin} visitPlans={myPlans} customers={customers} team={team} onAdd={addPlan} onStatus={updatePlanStatus} onDelete={deletePlan} onNewCustomer={addCustomer} selMonth={selMonth} selYear={selYear}/>}
+        {view==="customers"&&<CustomerList customers={customers} onAdd={addCustomer} onEdit={isAdmin?updateCustomer:null} monthSales={monthSales} fetchCustHistory={fetchCustHistory}/>}
+        {view==="my_account"&&!isAdmin&&<RepAccount user={user} onChangePassword={async(oldPw,newPw)=>{const match=team.find(t=>t.id===user.id&&t.password===oldPw);if(!match)return"Current password is incorrect.";await supabase.from("team").update({password:newPw}).eq("id",user.id);setTeam(t=>t.map(m=>m.id===user.id?{...m,password:newPw}:m));return null;}}/>}
+        {view==="visit_plan"&&<VisitPlanView user={user} isAdmin={isAdmin} visitPlans={myPlans} customers={customers} team={team} onAdd={addPlan} onStatus={async(id,status,notes)=>{
+          await updatePlanStatus(id,status);
+          if(status==="completed"){
+            const plan=visitPlans.find(p=>p.id===id);
+            if(plan) await addVisit({id:uid(),repId:plan.repId,repName:plan.repName,date:plan.plannedDate,customerId:plan.customerId,visitType:plan.visitType,notes:notes||plan.notes||""});
+          }
+        }} onDelete={deletePlan} onNewCustomer={addCustomer} selMonth={selMonth} selYear={selYear}/>}
         {view==="team"&&isAdmin&&<TeamMgmt team={team} onAdd={addMember} onRemove={removeMember}/>}
         {view==="skus"&&isAdmin&&<SKUManager skus={skus} onAdd={addSku} onDeactivate={deactivateSku}/>}
         {view==="prices"&&isAdmin&&<PricesMgmt cfg={cfg} skus={skus} onSave={saveCfg}/>}
         {view==="targets_set"&&isAdmin&&<TargetsMgmt team={team} targets={targets} skus={skus} onSave={saveTarget} selMonth={selMonth} selYear={selYear}/>}
       </main>
     </div>
+
+    {/* Bottom nav — mobile only */}
+    {isMobile&&user&&<BottomNav isAdmin={isAdmin} view={view} setView={setView} onLogout={()=>{setUser(null);setView("dashboard");}}/>}
   </div>;
 }
 
@@ -270,14 +316,93 @@ function Login({cfg,team,onLogin}){
       {/* Hack: real onKeyDown */}
       {err&&<p className="text-red-500 text-xs mb-3 text-center">{err}</p>}
       <button onClick={go} style={{background:G1}} className="w-full py-3 text-white rounded-xl font-bold text-sm">Sign In</button>
-      <p className="text-center text-xs text-gray-300 mt-4">Default admin password hint: <span className="font-mono">kyen</span></p>
+      <p className="text-center text-xs text-gray-300 mt-4">Default admin password: <span className="font-mono">kyen2024</span></p>
     </div>
   </div>;
 }
 
+// ── Bottom Navigation — mobile ────────────────────────────────────────────
+function BottomNav({isAdmin,view,setView,onLogout}){
+  const repItems=[
+    {id:"dashboard",  i:"📊", l:"Home"},
+    {id:"log_sale",   i:"🛒", l:"Sale"},
+    {id:"log_visits", i:"🗺️", l:"Visit"},
+    {id:"visit_plan", i:"📅", l:"Plan"},
+    {id:"more",       i:"⋯",  l:"More"},
+  ];
+  const admItems=[
+    {id:"dashboard",  i:"📊", l:"Home"},
+    {id:"all_sales",  i:"📋", l:"Sales"},
+    {id:"visits_log", i:"📍", l:"Visits"},
+    {id:"customers",  i:"🏪", l:"Outlets"},
+    {id:"more",       i:"⋯",  l:"More"},
+  ];
+  const items=isAdmin?admItems:repItems;
+  const [showMore,setShowMore]=useState(false);
+
+  const repMore=[
+    {id:"visits_log",  i:"📍", l:"Visits History"},
+    {id:"all_sales",   i:"📋", l:"My Sales"},
+    {id:"customers",   i:"🏪", l:"Customers"},
+    {id:"my_account",  i:"👤", l:"My Account"},
+  ];
+  const admMore=[
+    {id:"team",        i:"👥", l:"Team"},
+    {id:"skus",        i:"📦", l:"Manage SKUs"},
+    {id:"prices",      i:"💰", l:"Prices"},
+    {id:"targets_set", i:"🎯", l:"Targets"},
+    {id:"visit_plan",  i:"📅", l:"Visit Plans"},
+  ];
+  const moreItems=isAdmin?admMore:repMore;
+
+  const go=id=>{ setView(id); setShowMore(false); };
+
+  return <>
+    {/* More drawer */}
+    {showMore&&<div className="fixed inset-0 z-40" onClick={()=>setShowMore(false)}>
+      <div className="absolute bottom-16 left-0 right-0 bg-white border-t shadow-xl rounded-t-2xl p-4 z-50" onClick={e=>e.stopPropagation()}>
+        <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-4"/>
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          {moreItems.map(m=>(
+            <button key={m.id} onClick={()=>go(m.id)}
+              style={view===m.id?{background:G1+"15",color:G1}:{color:"#555"}}
+              className="flex flex-col items-center gap-1 p-2 rounded-xl text-xs font-medium">
+              <span className="text-2xl">{m.i}</span>
+              <span>{m.l}</span>
+            </button>
+          ))}
+        </div>
+        <button onClick={onLogout} style={{color:"#e74c3c",borderColor:"#e74c3c22"}}
+          className="w-full py-2.5 border rounded-xl text-sm font-semibold">
+          Sign Out
+        </button>
+      </div>
+    </div>}
+
+    {/* Bottom bar */}
+    <div className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t shadow-lg" style={{paddingBottom:"env(safe-area-inset-bottom)"}}>
+      <div className="flex items-center justify-around px-2 py-1">
+        {items.map(item=>{
+          const active=item.id==="more"?showMore:view===item.id;
+          return (
+            <button key={item.id}
+              onClick={()=>item.id==="more"?setShowMore(s=>!s):go(item.id)}
+              style={{color:active?G1:"#888"}}
+              className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all flex-1">
+              <span className="text-xl leading-none">{item.i}</span>
+              <span className="text-xs font-semibold" style={{fontSize:"10px"}}>{item.l}</span>
+              {active&&<div style={{background:G1}} className="w-1 h-1 rounded-full mt-0.5"/>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  </>;
+}
+
 // ── Sidebar ───────────────────────────────────────────────────────────────
 function Sidebar({isAdmin,view,setView,user,onLogout}){
-  const repNav=[{id:"dashboard",l:"Dashboard",i:"📊"},{id:"log_sale",l:"Log a Sale",i:"🛒"},{id:"log_visits",l:"Log Visits",i:"🗺️"},{id:"visits_log",l:"Visits History",i:"📍"},{id:"visit_plan",l:"Visit Plan",i:"📅"},{id:"all_sales",l:"My Sales",i:"📋"},{id:"customers",l:"Customers",i:"🏪"}];
+  const repNav=[{id:"dashboard",l:"Dashboard",i:"📊"},{id:"log_sale",l:"Log a Sale",i:"🛒"},{id:"log_visits",l:"Log Visits",i:"🗺️"},{id:"visits_log",l:"Visits History",i:"📍"},{id:"visit_plan",l:"Visit Plan",i:"📅"},{id:"all_sales",l:"My Sales",i:"📋"},{id:"customers",l:"Customers",i:"🏪"},{id:"my_account",l:"My Account",i:"👤"}];
   const admNav=[{id:"dashboard",l:"Dashboard",i:"📊"},{id:"all_sales",l:"All Sales",i:"📋"},{id:"visits_log",l:"Visits Log",i:"📍"},{id:"customers",l:"Customers",i:"🏪"},{id:"visit_plan",l:"Visit Plans",i:"📅"},{id:"team",l:"Team",i:"👥"},{id:"skus",l:"Manage SKUs",i:"📦"},{id:"prices",l:"Prices",i:"💰"},{id:"targets_set",l:"Targets",i:"🎯"}];
   const nav=isAdmin?admNav:repNav;
   return <div style={{background:G1}} className="w-52 flex-shrink-0 flex flex-col">
@@ -289,29 +414,40 @@ function Sidebar({isAdmin,view,setView,user,onLogout}){
 }
 
 // ── TopBar ────────────────────────────────────────────────────────────────
-function TopBar({selMonth,setSelMonth,selYear,setSelYear,fetching}){
-  return <div className="bg-white border-b px-4 py-2 flex items-center justify-between shadow-sm flex-shrink-0">
-    <div className="flex items-center gap-2"><span className="text-sm font-bold text-gray-700">Kyen Products — Sales Reporting</span>{fetching&&<div style={{borderTopColor:G1}} className="w-4 h-4 border-2 border-gray-200 rounded-full animate-spin"/>}</div>
-    <div className="flex items-center gap-2"><span className="text-xs text-gray-400">Period:</span>
-      <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="border rounded-lg px-2 py-1 text-xs">{MFULL.map((m,i)=><option key={i} value={i}>{m}</option>)}</select>
-      <select value={selYear} onChange={e=>setSelYear(Number(e.target.value))} className="border rounded-lg px-2 py-1 text-xs">{[2024,2025,2026,2027,2028].map(y=><option key={y}>{y}</option>)}</select>
+function TopBar({selMonth,setSelMonth,selYear,setSelYear,fetching,isMobile}){
+  return <div className="bg-white border-b px-3 py-2 flex items-center justify-between shadow-sm flex-shrink-0">
+    <div className="flex items-center gap-2">
+      {!isMobile&&<span className="text-sm font-bold text-gray-700">Kyen Products — Sales Reporting</span>}
+      {isMobile&&<span style={{color:G1}} className="text-sm font-black tracking-widest">KYEN</span>}
+      {fetching&&<div style={{borderTopColor:G1}} className="w-4 h-4 border-2 border-gray-200 rounded-full animate-spin"/>}
+    </div>
+    <div className="flex items-center gap-1.5">
+      <select value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))} className="border rounded-lg px-1.5 py-1 text-xs">
+        {MFULL.map((m,i)=><option key={i} value={i}>{isMobile?m.slice(0,3):m}</option>)}
+      </select>
+      <select value={selYear} onChange={e=>setSelYear(Number(e.target.value))} className="border rounded-lg px-1.5 py-1 text-xs">
+        {[2024,2025,2026,2027,2028].map(y=><option key={y}>{y}</option>)}
+      </select>
     </div>
   </div>;
 }
 
 // ── Rep Dashboard ─────────────────────────────────────────────────────────
-function RepDash({user,monthSales,monthVisits,targets,selMonth,selYear,skus}){
+function RepDash({user,monthSales,monthVisits,monthReturns,targets,selMonth,selYear,skus}){
   const tk=`${user.id}_${selYear}_${selMonth}`; const t=targets[tk]||{valueNGN:0,visitsTarget:0,skuTargets:{}};
-  const val=monthSales.reduce((a,s)=>a+Number(s.amount),0);
-  const outs=monthVisits.length;
+  const grossVal = monthSales.reduce((a,s)=>a+Number(s.amount),0);
+  const retVal   = monthReturns.reduce((a,r)=>a+Number(r.amount),0);
+  const val      = grossVal - retVal;
+  const outs     = monthVisits.length;
   const byDay={}; monthSales.forEach(s=>{byDay[s.date]=(byDay[s.date]||0)+Number(s.amount);});
   const lineData=Object.entries(byDay).sort().map(([d,v])=>({day:d.slice(5),value:v}));
   const skuPerf=skus.map(s=>{ const sold=monthSales.filter(x=>x.sku===s.sku).reduce((a,x)=>a+Number(x.qty),0); const tgt=Number(t.skuTargets?.[s.sku]||0); return {name:s.name,sku:s.sku,sold,tgt,p:pct(sold,tgt)}; }).filter(s=>s.sold>0||s.tgt>0);
   return <div className="space-y-4">
     <div><div className="text-lg font-black text-gray-800">Welcome, {user.name.split(" ")[0]} 👋</div><div className="text-xs text-gray-400">{MFULL[selMonth]} {selYear}</div></div>
     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-      <StatCard label="Sales Value" value={fmt(val)} sub={t.valueNGN>0?`Target: ${fmt(t.valueNGN)}`:""} pctVal={t.valueNGN>0?pct(val,t.valueNGN):undefined} color={G1}/>
+      <StatCard label="Net Sales Value" value={fmt(val)} sub={t.valueNGN>0?`Target: ${fmt(t.valueNGN)}`:retVal>0?`Gross: ${fmt(grossVal)}`:""}  pctVal={t.valueNGN>0?pct(val,t.valueNGN):undefined} color={G1}/>
       <StatCard label="Visits Made" value={outs} sub={t.visitsTarget>0?`Target: ${t.visitsTarget}`:""} pctVal={t.visitsTarget>0?pct(outs,t.visitsTarget):undefined} color={AMB}/>
+      <StatCard label="Returns" value={monthReturns.length} sub={retVal>0?fmt(retVal):""} color={retVal>0?"#e74c3c":"#aaa"}/>
       <StatCard label="Sales Entries" value={monthSales.length} color="#555"/>
     </div>
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -326,8 +462,11 @@ function RepDash({user,monthSales,monthVisits,targets,selMonth,selYear,skus}){
 }
 
 // ── Admin Dashboard ───────────────────────────────────────────────────────
-function AdminDash({monthSales,monthVisits,team,targets,selMonth,selYear,skus}){
-  const tv=monthSales.reduce((a,s)=>a+Number(s.amount),0); const to=monthVisits.length;
+function AdminDash({monthSales,monthVisits,monthReturns,team,targets,selMonth,selYear,skus}){
+  const grossVal  = monthSales.reduce((a,s)=>a+Number(s.amount),0);
+  const retVal    = monthReturns.reduce((a,r)=>a+Number(r.amount),0);
+  const tv        = grossVal - retVal;
+  const to        = monthVisits.length;
   const repPerf=team.map(rep=>{
     const rs=monthSales.filter(s=>s.repId===rep.id); const rv=monthVisits.filter(v=>v.repId===rep.id);
     const t=targets[`${rep.id}_${selYear}_${selMonth}`]||{valueNGN:0,visitsTarget:0};
@@ -351,9 +490,15 @@ function AdminDash({monthSales,monthVisits,team,targets,selMonth,selYear,skus}){
       <button onClick={doExport} style={{background:G1}} className="px-4 py-2 text-white text-xs font-bold rounded-xl">📦 Full Report Excel</button>
     </div>
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-      <StatCard label="Total Value" value={fmt(tv)} color={G1}/><StatCard label="Total Units" value={monthSales.reduce((a,s)=>a+Number(s.qty),0)} color={G2}/>
-      <StatCard label="Total Visits" value={to} color={AMB}/><StatCard label="Active Reps" value={team.length} color="#555"/>
+      <StatCard label="Net Sales Value"   value={fmt(tv)}      color={G1}/>
+      <StatCard label="Gross Sales"       value={fmt(grossVal)} color={G2}/>
+      <StatCard label="Returns / Refunds" value={fmt(retVal)}   color={retVal>0?"#e74c3c":"#aaa"}/>
+      <StatCard label="Total Visits"      value={to}           color={AMB}/>
     </div>
+    {retVal>0&&<div style={{background:"#FEF2F2",borderColor:"#e74c3c33"}} className="rounded-xl px-4 py-2.5 border flex items-center justify-between">
+      <div className="text-xs font-semibold" style={{color:"#e74c3c"}}>⚠️ {monthReturns.length} return{monthReturns.length!==1?"s":""} this period</div>
+      <div className="text-xs text-gray-500">Gross {fmt(grossVal)} − Returns {fmt(retVal)} = <span style={{color:G1,fontWeight:700}}>Net {fmt(tv)}</span></div>
+    </div>}
     <div className="bg-white rounded-xl shadow p-4"><div className="font-bold text-sm text-gray-800 mb-3">Team Performance</div>
       <div className="overflow-x-auto"><table className="w-full text-xs min-w-max">
         <thead><tr style={{background:G1}} className="text-white"><th className="p-2 text-left">Rep</th><th className="p-2 text-right">Value</th><th className="p-2 text-right">Val Tgt</th><th className="p-2 text-center">Val %</th><th className="p-2 text-right">Units</th><th className="p-2 text-right">Visits</th><th className="p-2 text-right">Visit Tgt</th><th className="p-2 text-center">Visit %</th></tr></thead>
@@ -380,38 +525,206 @@ function AdminDash({monthSales,monthVisits,team,targets,selMonth,selYear,skus}){
 
 // ── Log Sale ──────────────────────────────────────────────────────────────
 function LogSale({user,cfg,skus,customers,onSave,onNewCustomer}){
-  const [date,setDate]=useState(isoD(new Date())); const [channel,setChannel]=useState(""); const [custId,setCustId]=useState(""); const [lines,setLines]=useState([{sku:"",qty:1}]); const [saving,setSaving]=useState(false); const [done,setDone]=useState(false);
-  const lineTotal=l=>getP(cfg.prices,l.sku,channel)*Number(l.qty);
-  const grand=lines.reduce((a,l)=>a+lineTotal(l),0);
-  const valid=date&&channel&&custId&&lines.every(l=>l.sku&&Number(l.qty)>0);
-  const tier=channel==="Wholesaler"?"Wholesale Price":"Retail Price";
-  const selCust=customers.find(c=>c.id===custId);
-  const cats=[...new Set(skus.map(s=>s.cat))];
-  const handle=async()=>{ if(!valid) return; setSaving(true); const entries=lines.map(l=>({id:uid(),repId:user.id,repName:user.name,date,channel,customerId:custId,customerName:selCust?.name||"",sku:l.sku,qty:Number(l.qty),price:getP(cfg.prices,l.sku,channel),amount:lineTotal(l)})); await onSave(entries); setSaving(false); setDone(true); };
-  if(done) return <div className="max-w-md mx-auto mt-10 text-center bg-white rounded-2xl shadow p-10"><div className="text-5xl mb-3">✅</div><div style={{color:G1}} className="text-xl font-black mb-1">Sale Logged!</div><div className="text-gray-400 text-sm mb-6">Saved to database.</div><Btn onClick={()=>{setDone(false);setLines([{sku:"",qty:1}]);setCustId("");setChannel("");}}>Log Another Sale</Btn></div>;
-  return <div className="max-w-lg mx-auto"><div className="bg-white rounded-xl shadow p-6">
-    <div className="font-black text-gray-800 text-base mb-4">Log a Sale</div>
-    <div className="grid grid-cols-2 gap-3 mb-4">
-      <Inp label="Date of Sale *" type="date" value={date} onChange={setDate}/>
-      <Sel label="Sales Channel *" value={channel} onChange={setChannel}><option value="">Select…</option>{CHANNELS.map(c=><option key={c}>{c}</option>)}</Sel>
+  const [date,setDate]    = useState(isoD(new Date()));
+  const [channel,setChannel] = useState("");
+  const [custId,setCustId]   = useState("");
+  const [lines,setLines]     = useState([{sku:"",qty:1,discount:0}]);
+  const [saving,setSaving]   = useState(false);
+  const [done,setDone]       = useState(false);
+
+  const updLine = (i,field,val) => setLines(lines.map((x,j)=>j===i?{...x,[field]:val}:x));
+  const unitPrice  = (l) => getP(cfg.prices,l.sku,channel);
+  const lineGross  = (l) => unitPrice(l)*Number(l.qty||0);
+  const lineSaving = (l) => lineGross(l)*(Number(l.discount||0)/100);
+  const lineTotal  = (l) => lineGross(l)-lineSaving(l);
+  const totalGross  = lines.reduce((a,l)=>a+lineGross(l),0);
+  const totalSaving = lines.reduce((a,l)=>a+lineSaving(l),0);
+  const totalNet    = lines.reduce((a,l)=>a+lineTotal(l),0);
+  const hasDiscount = lines.some(l=>Number(l.discount||0)>0);
+
+  const [paymentType,setPaymentType] = useState("Cash");
+  const valid = date&&channel&&custId&&paymentType&&lines.every(l=>l.sku&&Number(l.qty)>0&&Number(l.discount||0)>=0&&Number(l.discount||0)<=100);
+  const TIER_CONFIG = {
+    "Supermarket":  {icon:"🏪",label:"Retail Price",    color:G2,          bg:"#EEF7F2",bc:G2},
+    "Retail Store": {icon:"🏪",label:"Retail Price",    color:G2,          bg:"#EEF7F2",bc:G2},
+    "Wholesaler":   {icon:"🏭",label:"Wholesale Price", color:"#B7800A",   bg:"#FFF8E7",bc:AMB},
+    "End User":     {icon:"👤",label:"End User Price",  color:"#6B21A8",   bg:"#F5F3FF",bc:"#A855F7"},
+  };
+  const tier = channel ? TIER_CONFIG[channel] : null;
+  const selCust = customers.find(c=>c.id===custId);
+  const cats    = [...new Set(skus.map(s=>s.cat))];
+
+  const handle = async () => {
+    if(!valid) return; setSaving(true);
+    const entries = lines.map(l=>({
+      id:uid(), repId:user.id, repName:user.name, date, channel,
+      customerId:custId, customerName:selCust?.name||"",
+      sku:l.sku, qty:Number(l.qty),
+      price:unitPrice(l),
+      discountPct:Number(l.discount||0),
+      paymentType,
+      amount:lineTotal(l),
+    }));
+    await onSave(entries); setSaving(false); setDone(true);
+  };
+
+  if(done) return (
+    <div className="max-w-md mx-auto mt-10 text-center bg-white rounded-2xl shadow p-10">
+      <div className="text-5xl mb-3">✅</div>
+      <div style={{color:G1}} className="text-xl font-black mb-1">Sale Logged!</div>
+      <div className="text-gray-400 text-sm mb-2">Saved to database.</div>
+      <div className="mb-6"><Badge color={PAY_COL[paymentType]}>{paymentType==="Cash"?"💵":paymentType==="Credit"?"📋":"🏦"} {paymentType}</Badge></div>
+      <Btn onClick={()=>{setDone(false);setLines([{sku:"",qty:1,discount:0}]);setCustId("");setChannel("");setPaymentType("Cash");}}>Log Another Sale</Btn>
     </div>
-    <div className="mb-4"><CustomerSelector customers={customers} value={custId} onChange={setCustId} onNewCustomer={onNewCustomer} label="Customer / Outlet *"/></div>
-    {selCust&&<div style={{background:GL}} className="rounded-xl p-3 mb-3 text-xs space-y-0.5"><div className="font-bold text-gray-800">{selCust.name}</div>{selCust.address&&<div className="text-gray-500">📍 {selCust.address}, {selCust.city}</div>}{selCust.contact_phone&&<div className="text-gray-500">📞 {selCust.contact_phone}</div>}</div>}
-    {channel&&<div style={{background:channel==="Wholesaler"?"#FFF8E7":"#EEF7F2",borderColor:channel==="Wholesaler"?AMB:G2}} className="rounded-xl px-3 py-2 mb-4 flex items-center gap-2 border"><span>{channel==="Wholesaler"?"🏭":"🏪"}</span><span style={{color:channel==="Wholesaler"?"#B7800A":G2}} className="text-xs font-black">{tier} applied</span></div>}
-    <div className="flex items-center justify-between mb-2"><div className="text-sm font-semibold text-gray-700">Products Sold</div><button onClick={()=>setLines([...lines,{sku:"",qty:1}])} style={{color:G1}} className="text-xs font-bold">+ Add SKU</button></div>
-    {channel&&<div className="flex gap-2 mb-1 px-1"><div className="flex-1 text-xs text-gray-400">SKU</div><div className="w-16 text-xs text-gray-400 text-center">Qty</div><div className="w-20 text-xs text-gray-400 text-right">Unit ₦</div><div className="w-24 text-xs text-gray-400 text-right">Subtotal</div><div className="w-4"/></div>}
-    <div className="space-y-2 mb-4">{lines.map((l,i)=>{ const up=getP(cfg.prices,l.sku,channel); return <div key={i} className="flex gap-2 items-center">
-      <select value={l.sku} onChange={e=>setLines(lines.map((x,j)=>j===i?{...x,sku:e.target.value}:x))} className="flex-1 border rounded-xl p-2 text-xs">
-        <option value="">Select SKU…</option>{cats.map(cat=><optgroup key={cat} label={cat}>{skus.filter(s=>s.cat===cat).map(s=><option key={s.sku} value={s.sku}>{s.sku}</option>)}</optgroup>)}
-      </select>
-      <input type="number" min="1" value={l.qty} onChange={e=>setLines(lines.map((x,j)=>j===i?{...x,qty:e.target.value}:x))} className="w-16 border rounded-xl p-2 text-sm text-center"/>
-      <div className="w-20 text-xs text-right text-gray-400">{l.sku&&channel?fmt(up):"—"}</div>
-      <div className="w-24 text-xs text-right font-semibold" style={{color:G2}}>{fmt(lineTotal(l))}</div>
-      {lines.length>1&&<button onClick={()=>setLines(lines.filter((_,j)=>j!==i))} className="text-red-400 font-bold text-lg">×</button>}
-    </div>; })}</div>
-    <div style={{background:GL}} className="rounded-xl p-3 mb-5 flex justify-between items-center"><div><span className="text-sm font-semibold text-gray-600">Grand Total</span>{channel&&<span className="text-xs text-gray-400 ml-2">({tier})</span>}</div><span style={{color:G1}} className="text-xl font-black">{fmt(grand)}</span></div>
-    <Btn onClick={handle} disabled={!valid||saving} full>{saving?"Saving…":"Submit Sale"}</Btn>
-  </div></div>;
+  );
+
+  return (
+    <div className="max-w-xl mx-auto">
+      <div className="bg-white rounded-xl shadow p-6">
+        <div className="font-black text-gray-800 text-base mb-4">Log a Sale</div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <Inp label="Date of Sale *" type="date" value={date} onChange={setDate}/>
+          <Sel label="Sales Channel *" value={channel} onChange={setChannel}>
+            <option value="">Select…</option>{CHANNELS.map(c=><option key={c}>{c}</option>)}
+          </Sel>
+        </div>
+
+        <div className="mb-4">
+          <CustomerSelector customers={customers} value={custId} onChange={setCustId} onNewCustomer={onNewCustomer} label="Customer / Outlet *"/>
+        </div>
+
+        {selCust&&(
+          <div style={{background:GL}} className="rounded-xl p-3 mb-3 text-xs space-y-0.5">
+            <div className="font-bold text-gray-800">{selCust.name}</div>
+            {selCust.address&&<div className="text-gray-500">📍 {selCust.address}, {selCust.city}</div>}
+            {selCust.contact_phone&&<div className="text-gray-500">📞 {selCust.contact_phone}</div>}
+          </div>
+        )}
+
+        {/* Payment Type */}
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Payment Type *</label>
+          <div className="flex gap-2">
+            {PAYMENT_TYPES.map(pt=>(
+              <button key={pt} onClick={()=>setPaymentType(pt)}
+                style={paymentType===pt?{background:PAY_COL[pt],color:"white",border:`1.5px solid ${PAY_COL[pt]}`}:{border:`1.5px solid ${PAY_COL[pt]}44`,color:PAY_COL[pt]}}
+                className="flex-1 py-2 rounded-xl text-xs font-bold transition-all">
+                {pt==="Cash"?"💵":pt==="Credit"?"📋":"🏦"} {pt}
+              </button>
+            ))}
+          </div>
+          {paymentType==="Credit"&&(
+            <div style={{background:"#FEF2F2",borderColor:"#e74c3c44"}} className="mt-2 rounded-lg px-3 py-2 border text-xs font-semibold text-red-600">
+              ⚠️ Credit sale — payment not yet collected. Ensure this is approved.
+            </div>
+          )}
+        </div>
+
+        {tier&&(
+          <div style={{background:tier.bg,borderColor:tier.bc+"66"}} className="rounded-xl px-3 py-2 mb-4 flex items-center gap-2 border">
+            <span>{tier.icon}</span>
+            <span style={{color:tier.color}} className="text-xs font-black">{tier.label} applied</span>
+          </div>
+        )}
+
+        {/* Column headers */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-semibold text-gray-700">Products Sold</div>
+          <button onClick={()=>setLines([...lines,{sku:"",qty:1,discount:0}])} style={{color:G1}} className="text-xs font-bold">+ Add SKU</button>
+        </div>
+        {channel&&(
+          <div className="grid gap-2 mb-1 px-1 text-xs text-gray-400" style={{gridTemplateColumns:"1fr 52px 72px 16px"}}>
+            <span>SKU</span><span className="text-center">Qty</span><span className="text-right">Subtotal</span><span/>
+          </div>
+        )}
+
+        <div className="space-y-2 mb-2">
+          {lines.map((l,i)=>{
+            const up  = unitPrice(l);
+            const disc= Number(l.discount||0);
+            const sub = lineTotal(l);
+            return (
+              <div key={i} className="rounded-xl border p-2 space-y-2" style={{borderColor:disc>0?"#F4A90066":"#e5e7eb",background:disc>0?"#FFFDF5":"white"}}>
+                {/* SKU row */}
+                <div className="grid gap-2 items-center" style={{gridTemplateColumns:"1fr 52px 72px 16px"}}>
+                  <select value={l.sku} onChange={e=>updLine(i,"sku",e.target.value)} className="border rounded-lg p-1.5 text-xs bg-white">
+                    <option value="">Select SKU…</option>
+                    {cats.map(cat=>(
+                      <optgroup key={cat} label={cat}>
+                        {skus.filter(s=>s.cat===cat).map(s=><option key={s.sku} value={s.sku}>{s.sku}</option>)}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <input type="number" min="1" value={l.qty} onChange={e=>updLine(i,"qty",e.target.value)}
+                    className="border rounded-lg p-1.5 text-xs text-center"/>
+                  <div className="text-xs text-right font-semibold" style={{color:G2}}>{fmt(sub)}</div>
+                  {lines.length>1
+                    ? <button onClick={()=>setLines(lines.filter((_,j)=>j!==i))} className="text-red-400 font-bold text-base leading-none">×</button>
+                    : <span/>}
+                </div>
+
+                {/* Unit price + Discount row — always visible per line */}
+                {l.sku&&channel&&(
+                  <div className="flex items-center gap-2 px-0.5 flex-wrap">
+                    <span className="text-xs text-gray-400">Unit: <span className="font-semibold text-gray-600">{fmt(up)}</span></span>
+                    <span className="text-gray-200 text-xs">|</span>
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-xs font-semibold" style={{color:AMB}}>🏷️ Discount %</label>
+                      <div className="flex items-center border rounded-lg overflow-hidden" style={{borderColor:disc>0?"#F4A900":"#e5e7eb",background:disc>0?"#FFF8E7":"white"}}>
+                        <input
+                          type="number" min="0" max="100" step="0.5"
+                          value={l.discount||""}
+                          onChange={e=>updLine(i,"discount",e.target.value)}
+                          placeholder="0"
+                          className="w-14 p-1.5 text-xs text-center outline-none"
+                          style={{background:"transparent"}}
+                        />
+                        <span className="pr-2 text-xs font-bold" style={{color:disc>0?"#B7800A":"#aaa"}}>%</span>
+                      </div>
+                      {disc>0&&(
+                        <span className="text-xs font-bold" style={{color:"#B7800A"}}>
+                          → saving {fmt(lineSaving(l))}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Grand total block */}
+        <div style={{background:GL}} className="rounded-xl p-3 mb-5 space-y-1">
+          {hasDiscount&&(
+            <div className="flex justify-between text-xs text-gray-500">
+              <span>Original total</span><span className="line-through">{fmt(totalGross)}</span>
+            </div>
+          )}
+          {hasDiscount&&(
+            <div className="flex justify-between text-xs font-semibold" style={{color:"#B7800A"}}>
+              <span>🏷️ Total discount</span><span>— {fmt(totalSaving)}</span>
+            </div>
+          )}
+          <div className="flex justify-between items-center pt-1">
+            <div>
+              <span className="text-sm font-semibold text-gray-600">Grand Total</span>
+              {tier&&<span className="text-xs text-gray-400 ml-2">({tier.label})</span>}
+            </div>
+            <span style={{color:G1}} className="text-xl font-black">{fmt(totalNet)}</span>
+          </div>
+          <div className="flex justify-between items-center pt-1 border-t border-gray-100 mt-1">
+            <span className="text-xs text-gray-500">Payment method</span>
+            <Badge color={PAY_COL[paymentType]}>{paymentType==="Cash"?"💵":paymentType==="Credit"?"📋":"🏦"} {paymentType}</Badge>
+          </div>
+        </div>
+
+        {!valid&&<p className="text-xs text-gray-400 mb-3">Fill in all required fields. Discount must be 0–100.</p>}
+        <Btn onClick={handle} disabled={!valid||saving} full>{saving?"Saving…":"Submit Sale"}</Btn>
+      </div>
+    </div>
+  );
 }
 
 // ── Log Visits ────────────────────────────────────────────────────────────
@@ -443,17 +756,67 @@ function LogVisits({user,customers,onSave,onNewCustomer}){
 
 // ── Visit Plan ────────────────────────────────────────────────────────────
 function VisitPlanView({user,isAdmin,visitPlans,customers,team,onAdd,onStatus,onDelete,onNewCustomer,selMonth,selYear}){
-  const [mode,setMode]=useState("week"); const [weekOff,setWeekOff]=useState(0); const [adding,setAdding]=useState(false); const [filterRep,setFilterRep]=useState("all");
-  const fp=filterRep==="all"?visitPlans:visitPlans.filter(p=>p.repId===filterRep);
-  const getWeek=off=>{ const t=new Date(); const m=new Date(t); m.setDate(t.getDate()-((t.getDay()||7)-1)+off*7); return Array.from({length:7},(_,i)=>{ const d=new Date(m); d.setDate(m.getDate()+i); return d; }); };
-  const week=getWeek(weekOff);
-  const wd=`${week[0].toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – ${week[6].toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}`;
-  const plansOn=d=>fp.filter(p=>p.plannedDate===isoD(d));
-  const daysInMonth=new Date(selYear,selMonth+1,0).getDate();
-  const firstDay=new Date(selYear,selMonth,1).getDay();
-  const cells=Array.from({length:firstDay+daysInMonth},(_,i)=>i<firstDay?null:i-firstDay+1);
-  const plansDay=day=>{ if(!day) return []; const ds=`${selYear}-${String(selMonth+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`; return fp.filter(p=>p.plannedDate===ds); };
+  const [mode,setMode]         = useState("week");
+  const [weekOff,setWeekOff]   = useState(0);
+  const [adding,setAdding]     = useState(false);
+  const [completing,setCompleting] = useState(null); // plan being completed
+  const [completeNotes,setCompleteNotes] = useState("");
+  const [filterRep,setFilterRep] = useState("all");
+
+  const fp  = filterRep==="all" ? visitPlans : visitPlans.filter(p=>p.repId===filterRep);
+  const getWeek = off => {
+    const t=new Date(); const m=new Date(t);
+    m.setDate(t.getDate()-((t.getDay()||7)-1)+off*7);
+    return Array.from({length:7},(_,i)=>{ const d=new Date(m); d.setDate(m.getDate()+i); return d; });
+  };
+  const week = getWeek(weekOff);
+  const wd   = `${week[0].toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – ${week[6].toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}`;
+  const plansOn  = d => fp.filter(p=>p.plannedDate===isoD(d));
+  const plansDay = day => {
+    if(!day) return [];
+    const ds=`${selYear}-${String(selMonth+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    return fp.filter(p=>p.plannedDate===ds);
+  };
   const stats={planned:fp.filter(p=>p.status==="planned").length,completed:fp.filter(p=>p.status==="completed").length,cancelled:fp.filter(p=>p.status==="cancelled").length};
+
+  const daysInMonth = new Date(selYear,selMonth+1,0).getDate();
+  const firstDay    = new Date(selYear,selMonth,1).getDay();
+  const cells       = Array.from({length:firstDay+daysInMonth},(_,i)=>i<firstDay?null:i-firstDay+1);
+
+  const handleComplete = async () => {
+    if(!completing) return;
+    await onStatus(completing.id,"completed",completeNotes);
+    setCompleting(null); setCompleteNotes("");
+  };
+
+  const PlanCard = ({p, compact=false}) => {
+    const c = customers.find(x=>x.id===p.customerId);
+    return (
+      <div style={{background:STATUS_COL[p.status]+"18",borderLeft:`3px solid ${STATUS_COL[p.status]}`}}
+        className={`rounded-r-lg p-1.5 text-xs group ${compact?"":"mb-1"}`}>
+        <div className="font-semibold text-gray-800 truncate">{c?.name||p.customerName||"—"}</div>
+        <div style={{color:VTYPE_COL[p.visitType]}} className="text-xs">{p.visitType}</div>
+        {isAdmin&&<div className="text-xs text-gray-400 truncate">{p.repName}</div>}
+        {p.notes&&!compact&&<div className="text-xs text-gray-400 truncate mt-0.5 italic">{p.notes}</div>}
+        <div className="hidden group-hover:flex gap-1 mt-1.5 flex-wrap items-center">
+          {p.status==="planned"&&<>
+            <button onClick={()=>{setCompleting(p);setCompleteNotes(p.notes||"");}}
+              style={{background:G1,color:"white"}} className="text-xs font-bold rounded px-2 py-0.5">
+              ✓ Complete
+            </button>
+            <button onClick={()=>onStatus(p.id,"cancelled","")}
+              className="text-xs font-bold text-red-400 border border-red-200 rounded px-2 py-0.5">
+              ✗ Cancel
+            </button>
+          </>}
+          {p.status==="completed"&&<span style={{color:G1}} className="text-xs font-bold">✓ Logged</span>}
+          {p.status==="cancelled"&&<span className="text-xs text-red-400 font-bold">✗ Cancelled</span>}
+          <button onClick={()=>onDelete(p.id)} className="text-xs text-gray-300 hover:text-red-400 ml-auto">🗑</button>
+        </div>
+      </div>
+    );
+  };
+
   return <div className="space-y-4">
     <div className="flex items-start justify-between flex-wrap gap-2">
       <div><div className="text-lg font-black text-gray-800">Visit Plan</div><div className="text-xs text-gray-400">{MFULL[selMonth]} {selYear}</div></div>
@@ -463,15 +826,24 @@ function VisitPlanView({user,isAdmin,visitPlans,customers,team,onAdd,onStatus,on
         <Btn sm onClick={()=>setAdding(true)}>+ Plan Visit</Btn>
       </div>
     </div>
+
     <div className="flex gap-2 flex-wrap">
       <Badge color={AMB}>⏳ {stats.planned} Planned</Badge>
       <Badge color={G1}>✓ {stats.completed} Completed</Badge>
       <Badge color="#e74c3c">✗ {stats.cancelled} Cancelled</Badge>
     </div>
 
+    {/* Completion notice */}
+    {stats.completed>0&&(
+      <div style={{background:"#EEF7F2",borderColor:G2+"44"}} className="rounded-xl px-3 py-2 border flex items-center gap-2 text-xs">
+        <span>✅</span>
+        <span style={{color:G1}} className="font-semibold">Completed visits are automatically added to the Visits Log.</span>
+      </div>
+    )}
+
     {/* Week view */}
     {mode==="week"&&<div className="space-y-3">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         <button onClick={()=>setWeekOff(w=>w-1)} className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">← Prev</button>
         <div className="text-sm font-semibold text-gray-700 flex-1 text-center">{wd}</div>
         <button onClick={()=>setWeekOff(w=>w+1)} className="px-3 py-1 border rounded-lg text-xs hover:bg-gray-50">Next →</button>
@@ -482,20 +854,11 @@ function VisitPlanView({user,isAdmin,visitPlans,customers,team,onAdd,onStatus,on
           const today=isoD(d)===isoD(new Date()); const plans=plansOn(d);
           return <div key={i} className="bg-white rounded-xl shadow-sm min-h-32">
             <div style={{background:today?G1:"",color:today?"white":"#666"}} className="rounded-t-xl px-2 py-1.5 text-center">
-              <div className="text-xs font-bold">{DAYS[d.getDay()]}</div><div className="text-sm font-black">{d.getDate()}</div>
+              <div className="text-xs font-bold">{DAYS[d.getDay()]}</div>
+              <div className="text-sm font-black">{d.getDate()}</div>
             </div>
             <div className="p-1.5 space-y-1">
-              {plans.map(p=>{ const c=customers.find(x=>x.id===p.customerId);
-                return <div key={p.id} style={{background:STATUS_COL[p.status]+"18",borderLeft:`3px solid ${STATUS_COL[p.status]}`}} className="rounded-r-lg p-1.5 text-xs group">
-                  <div className="font-semibold text-gray-800 truncate">{c?.name||p.customerName||"—"}</div>
-                  <div style={{color:VTYPE_COL[p.visitType]}} className="text-xs">{p.visitType}</div>
-                  {isAdmin&&<div className="text-xs text-gray-400 truncate">{p.repName}</div>}
-                  <div className="hidden group-hover:flex gap-1 mt-1 flex-wrap">
-                    {p.status==="planned"&&<><button onClick={()=>onStatus(p.id,"completed")} style={{color:G1}} className="text-xs font-bold border rounded px-1">✓</button><button onClick={()=>onStatus(p.id,"cancelled")} className="text-xs font-bold text-red-400 border rounded px-1">✗</button></>}
-                    <button onClick={()=>onDelete(p.id)} className="text-xs text-gray-400 ml-auto">🗑</button>
-                  </div>
-                </div>;
-              })}
+              {plans.map(p=><PlanCard key={p.id} p={p}/>)}
               {plans.length===0&&<div className="text-xs text-gray-200 text-center pt-3">—</div>}
             </div>
           </div>;
@@ -507,18 +870,60 @@ function VisitPlanView({user,isAdmin,visitPlans,customers,team,onAdd,onStatus,on
     {mode==="month"&&<div className="bg-white rounded-xl shadow p-4">
       <div className="grid grid-cols-7 gap-1 mb-1">{DAYS.map(d=><div key={d} className="text-center text-xs font-bold text-gray-400 py-1">{d}</div>)}</div>
       <div className="grid grid-cols-7 gap-1">
-        {cells.map((day,i)=>{ if(!day) return <div key={i}/>; const plans=plansDay(day); const ds=`${selYear}-${String(selMonth+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`; const today=ds===isoD(new Date());
+        {cells.map((day,i)=>{
+          if(!day) return <div key={i}/>;
+          const plans=plansDay(day);
+          const ds=`${selYear}-${String(selMonth+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+          const today=ds===isoD(new Date());
           return <div key={i} style={{background:today?GL:""}} className="min-h-14 border rounded-lg p-1 hover:bg-gray-50">
             <div style={{color:today?G1:"#999",fontWeight:today?700:400}} className="text-xs text-right mb-1">{day}</div>
-            {plans.slice(0,2).map(p=>{ const c=customers.find(x=>x.id===p.customerId); return <div key={p.id} style={{background:STATUS_COL[p.status],color:"white"}} className="text-xs rounded px-1 mb-0.5 truncate">{c?.name||"—"}</div>; })}
+            {plans.slice(0,2).map(p=>{
+              const c=customers.find(x=>x.id===p.customerId);
+              return <div key={p.id} style={{background:STATUS_COL[p.status],color:"white"}} className="text-xs rounded px-1 mb-0.5 truncate cursor-pointer"
+                onClick={()=>{if(p.status==="planned"){setCompleting(p);setCompleteNotes(p.notes||"");}}}>
+                {c?.name||"—"}
+              </div>;
+            })}
             {plans.length>2&&<div className="text-xs text-gray-400">+{plans.length-2}</div>}
           </div>;
         })}
       </div>
     </div>}
 
+    {/* Add plan modal */}
     {adding&&<Modal title="Plan a Visit" onClose={()=>setAdding(false)}>
       <AddPlanForm user={user} isAdmin={isAdmin} team={team} customers={customers} onSave={async p=>{await onAdd(p);setAdding(false);}} onClose={()=>setAdding(false)} onNewCustomer={onNewCustomer}/>
+    </Modal>}
+
+    {/* Complete visit modal — auto-creates visit log */}
+    {completing&&<Modal title="Complete Visit" onClose={()=>{setCompleting(null);setCompleteNotes("");}}>
+      <div className="space-y-4">
+        {/* Plan summary */}
+        <div style={{background:GL}} className="rounded-xl p-3">
+          <div className="font-bold text-gray-800 text-sm">{completing.customerName||"—"}</div>
+          <div className="text-xs text-gray-500 mt-0.5">{completing.plannedDate} · <span style={{color:VTYPE_COL[completing.visitType]}} className="font-semibold">{completing.visitType}</span></div>
+          {isAdmin&&<div className="text-xs text-gray-400 mt-0.5">Rep: {completing.repName}</div>}
+        </div>
+
+        {/* Info banner */}
+        <div style={{background:"#EEF7F2",borderColor:G2+"44"}} className="rounded-xl px-3 py-2.5 border">
+          <div style={{color:G1}} className="text-xs font-black mb-0.5">✅ This will also create a Visit Log entry</div>
+          <div className="text-xs text-gray-500">The visit will appear in Visits History automatically.</div>
+        </div>
+
+        {/* Notes */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Visit Outcome / Notes <span className="font-normal text-gray-400">(optional)</span></label>
+          <textarea value={completeNotes} onChange={e=>setCompleteNotes(e.target.value)}
+            rows={3} placeholder="What was discussed? Any orders placed? Next steps?"
+            className="w-full border rounded-xl p-2.5 text-sm outline-none resize-none"/>
+        </div>
+
+        <div className="flex gap-2">
+          <Btn onClick={handleComplete} full>✓ Mark as Completed</Btn>
+          <Btn onClick={()=>{setCompleting(null);setCompleteNotes("");}} outline color="#999" sm>Cancel</Btn>
+        </div>
+      </div>
     </Modal>}
   </div>;
 }
@@ -540,41 +945,229 @@ function AddPlanForm({user,isAdmin,team,customers,onSave,onClose,onNewCustomer})
 }
 
 // ── All Sales View ────────────────────────────────────────────────────────
-function AllSalesView({sales,customers,team,onDelete,month,year,skus}){
-  const [filter,setFilter]=useState("all");
-  const f=filter==="all"?sales:sales.filter(s=>s.repId===filter||s.channel===filter);
-  const tv=f.reduce((a,s)=>a+Number(s.amount),0);
-  const doXL=()=>dlXLSX([{name:"Sales",data:f.map(s=>({Date:s.date,Rep:s.repName,Customer:s.customerName||customers.find(c=>c.id===s.customerId)?.name||"",Channel:s.channel,SKU:s.sku,Product:skus.find(k=>k.sku===s.sku)?.name||"",Qty:s.qty,"Unit Price":s.price,"Amount (NGN)":s.amount}))}],`Kyen_Sales_${MFULL[month]}_${year}`);
-  return <div className="space-y-3">
-    <div className="flex items-center justify-between flex-wrap gap-2">
-      <div className="font-black text-gray-800">Sales Records <span className="font-normal text-sm text-gray-400">({f.length})</span></div>
-      <div className="flex gap-2 flex-wrap items-center">
-        <select value={filter} onChange={e=>setFilter(e.target.value)} className="border rounded-xl px-3 py-1.5 text-xs"><option value="all">All</option>{CHANNELS.map(c=><option key={c} value={c}>{c}</option>)}{team.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
-        {f.length>0&&<><button onClick={doXL} style={{background:G1}} className="px-3 py-1.5 text-white text-xs font-bold rounded-xl">⬇ Excel</button><button onClick={()=>dlCSV(f.map(s=>({Date:s.date,Rep:s.repName,Customer:s.customerName||"",Channel:s.channel,SKU:s.sku,Qty:s.qty,Amount:s.amount})),`Kyen_Sales_${MFULL[month]}_${year}`)} style={{background:G2}} className="px-3 py-1.5 text-white text-xs font-bold rounded-xl">⬇ CSV</button></>}
+// ── Return Modal ──────────────────────────────────────────────────────────
+const RETURN_TYPES   = ["Full Return","Partial Return","Refund Only"];
+const RETURN_REASONS = ["Customer changed mind","Damaged goods","Wrong product delivered","Quality issue","Order cancelled","Other"];
+
+function ReturnModal({sale,user,customers,onSave,onClose}){
+  const [date,     setDate]    = useState(isoD(new Date()));
+  const [qty,      setQty]     = useState(sale?.qty||1);
+  const [reason,   setReason]  = useState("");
+  const [retType,  setRetType] = useState("Full Return");
+  const [custId,   setCustId]  = useState(sale?.customerId||"");
+  const [sku,      setSku]     = useState(sale?.sku||"");
+  const [price,    setPrice]   = useState(sale?.price||0);
+  const [saving,   setSaving]  = useState(false);
+
+  const refundAmt = Number(qty||0)*Number(price||0);
+  const isSaleLinked = !!sale;
+  const valid = date && reason && qty>0 && (isSaleLinked || (custId&&sku&&price>0));
+
+  const handle = async () => {
+    if(!valid) return; setSaving(true);
+    const cust = customers.find(c=>c.id===(sale?.customerId||custId));
+    await onSave({
+      id:uid(), saleId:sale?.id||null,
+      repId:user.id, repName:user.name,
+      date, customerId:sale?.customerId||custId,
+      customerName:sale?.customerName||cust?.name||"",
+      sku:sale?.sku||sku, qty:Number(qty),
+      price:sale?.price||Number(price),
+      amount:refundAmt, reason, returnType:retType,
+    });
+    setSaving(false); onClose();
+  };
+
+  return <Modal title="Log Return / Refund" onClose={onClose}>
+    <div className="space-y-3">
+      {/* Linked sale summary */}
+      {isSaleLinked&&<div style={{background:GL}} className="rounded-xl p-3 text-xs space-y-0.5">
+        <div className="text-gray-400 font-semibold">Original Sale</div>
+        <div className="font-bold text-gray-800">{sale.customerName}</div>
+        <div className="text-gray-500">{sale.sku} · qty {sale.qty} · {fmt(sale.amount)} · {sale.date}</div>
+      </div>}
+
+      {/* Warning banner */}
+      <div style={{background:"#FEF2F2",borderColor:"#e74c3c33"}} className="rounded-xl px-3 py-2.5 border">
+        <div style={{color:"#e74c3c"}} className="text-xs font-black mb-0.5">⚠️ Return / Refund</div>
+        <div className="text-xs text-gray-500">This will reduce net sales for the period and appear in the returns log.</div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Inp label="Return Date *" type="date" value={date} onChange={setDate}/>
+        <Sel label="Return Type *" value={retType} onChange={setRetType}>
+          {RETURN_TYPES.map(t=><option key={t}>{t}</option>)}
+        </Sel>
+      </div>
+
+      <Sel label="Reason *" value={reason} onChange={setReason}>
+        <option value="">Select reason…</option>
+        {RETURN_REASONS.map(r=><option key={r}>{r}</option>)}
+      </Sel>
+
+      {/* Qty returned */}
+      <div>
+        <label className="block text-xs font-semibold text-gray-500 mb-1">
+          Quantity Returned * {isSaleLinked&&<span className="font-normal text-gray-400">(max {sale.qty})</span>}
+        </label>
+        <input type="number" min="1" max={isSaleLinked?sale.qty:undefined}
+          value={qty} onChange={e=>setQty(e.target.value)}
+          className="w-full border rounded-xl p-2.5 text-sm outline-none"/>
+      </div>
+
+      {/* Refund amount */}
+      <div style={{background:GL}} className="rounded-xl p-3 flex justify-between items-center">
+        <span className="text-sm font-semibold text-gray-600">Refund Amount</span>
+        <span style={{color:"#e74c3c"}} className="text-xl font-black">— {fmt(refundAmt)}</span>
+      </div>
+
+      <div className="flex gap-2">
+        <Btn onClick={handle} disabled={!valid||saving} color="#e74c3c" full>
+          {saving?"Saving…":"Confirm Return"}
+        </Btn>
+        <Btn onClick={onClose} outline color="#999" sm>Cancel</Btn>
       </div>
     </div>
-    <div style={{background:GL}} className="rounded-xl px-4 py-2 flex gap-6">
-      <div><span className="text-xs text-gray-500">Value</span><div style={{color:G1}} className="font-black text-sm">{fmt(tv)}</div></div>
-      <div><span className="text-xs text-gray-500">Units</span><div style={{color:G1}} className="font-black text-sm">{f.reduce((a,s)=>a+Number(s.qty),0)}</div></div>
+  </Modal>;
+}
+
+// ── All Sales View ────────────────────────────────────────────────────────
+function AllSalesView({sales,returns,customers,team,onDelete,onAddReturn,user,month,year,skus}){
+  const [filter,    setFilter]   = useState("all");
+  const [tab,       setTab]      = useState("sales"); // sales | returns
+  const [returning, setReturning]= useState(null); // sale being returned
+
+  const f = filter==="all" ? sales : sales.filter(s=>s.repId===filter||s.channel===filter);
+  const fr= filter==="all" ? returns : returns.filter(r=>r.repId===filter);
+
+  const grossVal  = f.reduce((a,s)=>a+Number(s.amount),0);
+  const retVal    = fr.reduce((a,r)=>a+Number(r.amount),0);
+  const netVal    = grossVal - retVal;
+  const totalSaved= f.reduce((a,s)=>a+(s.price*s.qty-s.amount),0);
+  const hasAnyDiscount = f.some(s=>Number(s.discountPct||0)>0);
+
+  const doXL=()=>dlXLSX([
+    {name:"Sales",data:f.map(s=>({Date:s.date,Rep:s.repName,Customer:s.customerName||customers.find(c=>c.id===s.customerId)?.name||"",Channel:s.channel,SKU:s.sku,Product:skus.find(k=>k.sku===s.sku)?.name||"",Qty:s.qty,"Unit Price (₦)":s.price,"Discount %":s.discountPct||0,"Payment":s.paymentType||"Cash","Amount (₦)":s.amount}))},
+    {name:"Returns",data:fr.map(r=>({Date:r.date,Rep:r.repName,Customer:r.customerName||"",SKU:r.sku,Qty:r.qty,"Unit Price (₦)":r.price,"Refund (₦)":r.amount,Type:r.returnType,Reason:r.reason}))},
+  ],`Kyen_Sales_${MFULL[month]}_${year}`);
+
+  return <div className="space-y-3">
+    {/* Header */}
+    <div className="flex items-center justify-between flex-wrap gap-2">
+      <div className="font-black text-gray-800">
+        {tab==="sales"?"Sales Records":"Returns Log"}
+        <span className="font-normal text-sm text-gray-400 ml-1">({tab==="sales"?f.length:fr.length})</span>
+      </div>
+      <div className="flex gap-2 flex-wrap items-center">
+        <select value={filter} onChange={e=>setFilter(e.target.value)} className="border rounded-xl px-3 py-1.5 text-xs">
+          <option value="all">All</option>
+          {CHANNELS.map(c=><option key={c} value={c}>{c}</option>)}
+          {team.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        <button onClick={doXL} style={{background:G1}} className="px-3 py-1.5 text-white text-xs font-bold rounded-xl">⬇ Excel</button>
+      </div>
     </div>
-    <div className="bg-white rounded-xl shadow overflow-x-auto"><table className="w-full text-xs min-w-max">
-      <thead><tr style={{background:G1}} className="text-white text-left"><th className="p-2.5">Date</th><th className="p-2.5">Rep</th><th className="p-2.5">Customer</th><th className="p-2.5">Channel</th><th className="p-2.5">SKU</th><th className="p-2.5 text-right">Qty</th><th className="p-2.5 text-right">Amount</th>{onDelete&&<th className="p-2.5"/>}</tr></thead>
-      <tbody>
-        {f.length===0&&<tr><td colSpan={8} className="text-center p-8 text-gray-400">No sales for this period.</td></tr>}
-        {[...f].reverse().map((s,i)=><tr key={s.id} style={{background:i%2===0?LG:"white"}}>
-          <td className="p-2.5">{s.date}</td><td className="p-2.5 font-medium">{s.repName}</td>
-          <td className="p-2.5 font-medium">{s.customerName||customers.find(c=>c.id===s.customerId)?.name||"—"}</td>
-          <td className="p-2.5"><Badge color={s.channel==="Wholesaler"?AMB:G1}>{s.channel}</Badge></td>
-          <td className="p-2.5 text-gray-600">{s.sku}</td><td className="p-2.5 text-right font-semibold">{s.qty}</td>
-          <td className="p-2.5 text-right font-bold" style={{color:G1}}>{fmt(s.amount)}</td>
-          {onDelete&&<td className="p-2.5 text-center"><button onClick={()=>onDelete(s.id)} className="text-red-300 hover:text-red-500">🗑</button></td>}
-        </tr>)}
-      </tbody>
-    </table></div>
+
+    {/* Tab toggle */}
+    <div className="flex gap-0 border rounded-xl overflow-hidden w-fit">
+      <button onClick={()=>setTab("sales")} style={tab==="sales"?{background:G1,color:"white"}:{color:"#666"}}
+        className="px-4 py-1.5 text-xs font-semibold">💰 Sales ({f.length})</button>
+      <button onClick={()=>setTab("returns")} style={tab==="returns"?{background:"#e74c3c",color:"white"}:{color:"#e74c3c"}}
+        className="px-4 py-1.5 text-xs font-semibold">↩ Returns ({fr.length})</button>
+    </div>
+
+    {/* Summary strip */}
+    <div style={{background:GL}} className="rounded-xl px-4 py-2 flex gap-6 flex-wrap">
+      <div><span className="text-xs text-gray-500">Gross Sales</span><div style={{color:G2}} className="font-black text-sm">{fmt(grossVal)}</div></div>
+      <div><span className="text-xs text-gray-500">Returns</span><div style={{color:retVal>0?"#e74c3c":"#aaa"}} className="font-black text-sm">{fr.length>0?`− ${fmt(retVal)}`:fmt(0)}</div></div>
+      <div><span className="text-xs text-gray-500">Net Sales</span><div style={{color:G1}} className="font-black text-sm">{fmt(netVal)}</div></div>
+      <div><span className="text-xs text-gray-500">💵 Cash</span><div style={{color:G1}} className="font-black text-sm">{fmt(f.filter(s=>s.paymentType==="Cash").reduce((a,s)=>a+s.amount,0))}</div></div>
+      <div><span className="text-xs text-gray-500">📋 Credit</span><div style={{color:"#e74c3c"}} className="font-black text-sm">{fmt(f.filter(s=>s.paymentType==="Credit").reduce((a,s)=>a+s.amount,0))}</div></div>
+      {totalSaved>0&&<div><span className="text-xs text-gray-500">Discounts</span><div style={{color:"#B7800A"}} className="font-black text-sm">{fmt(totalSaved)}</div></div>}
+    </div>
+
+    {/* SALES TABLE */}
+    {tab==="sales"&&<div className="bg-white rounded-xl shadow overflow-x-auto">
+      <table className="w-full text-xs min-w-max">
+        <thead><tr style={{background:G1}} className="text-white text-left">
+          <th className="p-2.5">Date</th><th className="p-2.5">Rep</th><th className="p-2.5">Customer</th>
+          <th className="p-2.5">Channel</th><th className="p-2.5">Payment</th><th className="p-2.5">SKU</th>
+          <th className="p-2.5 text-right">Qty</th><th className="p-2.5 text-right">Unit ₦</th>
+          {hasAnyDiscount&&<th className="p-2.5 text-center">Disc</th>}
+          <th className="p-2.5 text-right">Amount</th>
+          <th className="p-2.5 text-center">↩</th>
+          {onDelete&&<th className="p-2.5"/>}
+        </tr></thead>
+        <tbody>
+          {f.length===0&&<tr><td colSpan={12} className="text-center p-8 text-gray-400">No sales for this period.</td></tr>}
+          {[...f].reverse().map((s,i)=>{
+            const disc=Number(s.discountPct||0);
+            const pt=s.paymentType||"Cash";
+            const hasReturn=fr.some(r=>r.saleId===s.id);
+            return <tr key={s.id} style={{background:i%2===0?LG:"white",opacity:hasReturn?0.7:1}}>
+              <td className="p-2.5">{s.date}</td>
+              <td className="p-2.5 font-medium">{s.repName}</td>
+              <td className="p-2.5 font-medium">{s.customerName||customers.find(c=>c.id===s.customerId)?.name||"—"}</td>
+              <td className="p-2.5"><Badge color={s.channel==="Wholesaler"?AMB:s.channel==="End User"?"#6B21A8":G1}>{s.channel}</Badge></td>
+              <td className="p-2.5"><Badge color={PAY_COL[pt]}>{pt}</Badge></td>
+              <td className="p-2.5 text-gray-600">{s.sku}</td>
+              <td className="p-2.5 text-right font-semibold">{s.qty}</td>
+              <td className="p-2.5 text-right text-gray-500">{fmt(s.price)}</td>
+              {hasAnyDiscount&&<td className="p-2.5 text-center">{disc>0?<span style={{background:"#F4A90022",color:"#B7800A"}} className="font-bold px-1.5 py-0.5 rounded-full">🏷️{disc}%</span>:<span className="text-gray-300">—</span>}</td>}
+              <td className="p-2.5 text-right font-bold" style={{color:G1}}>{fmt(s.amount)}</td>
+              <td className="p-2.5 text-center">
+                {hasReturn
+                  ? <span className="text-xs text-gray-400">↩ done</span>
+                  : <button onClick={()=>setReturning(s)} style={{color:"#e74c3c"}} className="text-xs font-bold hover:underline">↩ Return</button>}
+              </td>
+              {onDelete&&<td className="p-2.5 text-center"><button onClick={()=>onDelete(s.id)} className="text-red-300 hover:text-red-500">🗑</button></td>}
+            </tr>;
+          })}
+        </tbody>
+      </table>
+    </div>}
+
+    {/* RETURNS TABLE */}
+    {tab==="returns"&&<div className="bg-white rounded-xl shadow overflow-x-auto">
+      <table className="w-full text-xs min-w-max">
+        <thead><tr style={{background:"#e74c3c"}} className="text-white text-left">
+          <th className="p-2.5">Date</th><th className="p-2.5">Rep</th><th className="p-2.5">Customer</th>
+          <th className="p-2.5">SKU</th><th className="p-2.5 text-right">Qty</th>
+          <th className="p-2.5 text-right">Refund ₦</th>
+          <th className="p-2.5">Type</th><th className="p-2.5">Reason</th>
+        </tr></thead>
+        <tbody>
+          {fr.length===0&&<tr><td colSpan={8} className="text-center p-8 text-gray-400">No returns logged this period. ✅</td></tr>}
+          {[...fr].reverse().map((r,i)=>(
+            <tr key={r.id} style={{background:i%2===0?"#FEF2F2":"white"}}>
+              <td className="p-2.5">{r.date}</td>
+              <td className="p-2.5 font-medium">{r.repName}</td>
+              <td className="p-2.5 font-medium">{r.customerName||customers.find(c=>c.id===r.customerId)?.name||"—"}</td>
+              <td className="p-2.5 text-gray-600">{r.sku}</td>
+              <td className="p-2.5 text-right font-semibold">{r.qty}</td>
+              <td className="p-2.5 text-right font-bold" style={{color:"#e74c3c"}}>− {fmt(r.amount)}</td>
+              <td className="p-2.5"><span style={{background:"#e74c3c22",color:"#e74c3c"}} className="text-xs font-bold px-2 py-0.5 rounded-full">{r.returnType}</span></td>
+              <td className="p-2.5 text-gray-500">{r.reason}</td>
+            </tr>
+          ))}
+        </tbody>
+        {fr.length>0&&<tfoot>
+          <tr style={{background:"#FEF2F2"}} className="font-bold">
+            <td colSpan={5} className="p-2.5 text-xs text-gray-600">TOTAL REFUNDED</td>
+            <td className="p-2.5 text-right text-xs" style={{color:"#e74c3c"}}>− {fmt(retVal)}</td>
+            <td colSpan={2}/>
+          </tr>
+        </tfoot>}
+      </table>
+    </div>}
+
+    {/* Return modal */}
+    {returning&&<ReturnModal sale={returning} user={user} customers={customers}
+      onSave={async r=>{await onAddReturn(r);setReturning(null);}}
+      onClose={()=>setReturning(null)}/>}
   </div>;
 }
 
-// ── Customer List ─────────────────────────────────────────────────────────
 // ── Visits Log ────────────────────────────────────────────────────────────
 function VisitsLog({visits,customers,team,isAdmin,month,year}){
   const [filterRep,setFilterRep]=useState("all");
@@ -675,10 +1268,69 @@ function VisitsLog({visits,customers,team,isAdmin,month,year}){
   </div>;
 }
 
-// ── Customer List (with admin edit) ───────────────────────────────────────
-function CustomerList({customers,onAdd,onEdit,monthSales}){
+// ── Customer Purchase History ─────────────────────────────────────────────
+function CustomerHistory({customer,onClose,fetchHistory}){
+  const [data,setData]=useState(null);
+  const [loading,setLoading]=useState(true);
+  useEffect(()=>{ fetchHistory(customer.id).then(d=>{setData(d);setLoading(false);}); },[customer.id]);
+  const sales  =data?.sales||[];
+  const rets   =data?.returns||[];
+  const total  =sales.reduce((a,s)=>a+Number(s.amount),0);
+  const retVal =rets.reduce((a,r)=>a+Number(r.amount),0);
+  const net    =total-retVal;
+  const cash   =sales.filter(s=>s.paymentType==="Cash").reduce((a,s)=>a+Number(s.amount),0);
+  const credit =sales.filter(s=>s.paymentType==="Credit").reduce((a,s)=>a+Number(s.amount),0);
+  return <Modal title={`Purchase History — ${customer.name}`} onClose={onClose}>
+    {loading
+      ? <div className="text-center py-8 text-gray-400 text-sm">Loading history…</div>
+      : <div className="space-y-3">
+          <div style={{background:GL}} className="rounded-xl p-3 text-xs space-y-0.5">
+            <div className="font-bold text-gray-800">{customer.name}</div>
+            {customer.address&&<div className="text-gray-500">📍 {customer.address}, {customer.city}</div>}
+            {customer.contact_phone&&<div className="text-gray-500">📞 {customer.contact_phone}{customer.contact_name&&` · ${customer.contact_name}`}</div>}
+            {customer.zone&&<div className="text-gray-500">🗺️ {customer.zone}</div>}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-white rounded-xl p-3 text-center shadow-sm border"><div className="text-xs text-gray-400">Gross Sales</div><div style={{color:G2}} className="font-black text-sm">{fmt(total)}</div></div>
+            <div className="bg-white rounded-xl p-3 text-center shadow-sm border"><div className="text-xs text-gray-400">Net (after returns)</div><div style={{color:G1}} className="font-black text-sm">{fmt(net)}</div></div>
+            <div className="bg-white rounded-xl p-3 text-center shadow-sm border"><div className="text-xs text-gray-400">💵 Cash</div><div style={{color:G1}} className="font-black text-sm">{fmt(cash)}</div></div>
+            <div className="bg-white rounded-xl p-3 text-center shadow-sm border"><div className="text-xs text-gray-400">📋 Credit</div><div style={{color:credit>0?"#e74c3c":"#aaa"}} className="font-black text-sm">{fmt(credit)}</div></div>
+          </div>
+          {rets.length>0&&<div style={{background:"#FEF2F2",borderColor:"#e74c3c33",color:"#e74c3c"}} className="rounded-xl px-3 py-2 border text-xs font-black">↩ {rets.length} return{rets.length!==1?"s":""} — {fmt(retVal)} refunded</div>}
+          <div className="max-h-72 overflow-y-auto space-y-1.5">
+            {sales.map((s,i)=>(
+              <div key={s.id} style={{background:i%2===0?LG:"white"}} className="rounded-lg px-3 py-2 flex justify-between items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold text-gray-800 truncate">{s.sku}</div>
+                  <div className="text-xs text-gray-400">{s.date} · {s.repName} · qty {s.qty}{s.discountPct>0?` · ${s.discountPct}% disc`:""}</div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <Badge color={PAY_COL[s.paymentType||"Cash"]}>{s.paymentType||"Cash"}</Badge>
+                  <div style={{color:G1}} className="font-black text-xs">{fmt(s.amount)}</div>
+                </div>
+              </div>
+            ))}
+            {rets.map((r,i)=>(
+              <div key={r.id} style={{background:"#FEF2F2"}} className="rounded-lg px-3 py-2 flex justify-between items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold" style={{color:"#e74c3c"}}>↩ Return — {r.sku}</div>
+                  <div className="text-xs text-gray-400">{r.date} · {r.repName} · qty {r.qty} · {r.reason}</div>
+                </div>
+                <div style={{color:"#e74c3c"}} className="font-black text-xs flex-shrink-0">− {fmt(r.amount)}</div>
+              </div>
+            ))}
+            {sales.length===0&&rets.length===0&&<div className="text-center py-6 text-gray-400 text-sm">No purchase history yet.</div>}
+          </div>
+          <div className="text-xs text-gray-400 text-center">{sales.length} sale{sales.length!==1?"s":""} · {rets.length} return{rets.length!==1?"s":""} · all time</div>
+        </div>}
+  </Modal>;
+}
+
+// ── Customer List ─────────────────────────────────────────────────────────
+function CustomerList({customers,onAdd,onEdit,monthSales,fetchCustHistory}){
   const [adding,setAdding]=useState(false);
-  const [editing,setEditing]=useState(null); // customer object being edited
+  const [editing,setEditing]=useState(null);
+  const [viewing,setViewing]=useState(null);
   const [search,setSearch]=useState("");
   const [saved,setSaved]=useState(false);
 
@@ -688,7 +1340,6 @@ function CustomerList({customers,onAdd,onEdit,monthSales}){
     (c.zone||"").toLowerCase().includes(search.toLowerCase())
   );
   const sc=id=>monthSales.filter(s=>s.customerId===id).length;
-
   const handleEdit=async()=>{
     if(!editing||!editing.name.trim()) return;
     await onEdit(editing);
@@ -701,27 +1352,31 @@ function CustomerList({customers,onAdd,onEdit,monthSales}){
       <Btn sm onClick={()=>setAdding(true)}>+ New Customer</Btn>
     </div>
     <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by name, city or zone…" className="w-full border rounded-xl p-2.5 text-sm outline-none"/>
-
     <div className="bg-white rounded-xl shadow overflow-x-auto">
       <table className="w-full text-xs min-w-max">
         <thead><tr style={{background:G1}} className="text-white text-left">
           <th className="p-2.5">Name</th><th className="p-2.5">Type</th>
           <th className="p-2.5">City</th><th className="p-2.5">Zone</th>
           <th className="p-2.5">Address</th><th className="p-2.5">Contact</th>
-          <th className="p-2.5">Phone</th><th className="p-2.5 text-center">Sales</th>
+          <th className="p-2.5">Phone</th>
+          <th className="p-2.5 text-center">Sales</th>
+          <th className="p-2.5 text-center">History</th>
           {onEdit&&<th className="p-2.5 text-center">Edit</th>}
         </tr></thead>
         <tbody>
-          {fl.length===0&&<tr><td colSpan={onEdit?9:8} className="text-center p-8 text-gray-400">No customers yet.</td></tr>}
+          {fl.length===0&&<tr><td colSpan={onEdit?10:9} className="text-center p-8 text-gray-400">No customers yet.</td></tr>}
           {fl.map((c,i)=><tr key={c.id} style={{background:i%2===0?LG:"white"}}>
             <td className="p-2.5 font-semibold">{c.name}</td>
-            <td className="p-2.5"><Badge color={c.type==="Wholesaler"?AMB:G1}>{c.type||"—"}</Badge></td>
+            <td className="p-2.5"><Badge color={c.type==="Wholesaler"?AMB:c.type==="End User"?"#6B21A8":G1}>{c.type||"—"}</Badge></td>
             <td className="p-2.5">{c.city||"—"}</td>
             <td className="p-2.5">{c.zone||"—"}</td>
             <td className="p-2.5">{c.address||"—"}</td>
             <td className="p-2.5">{c.contact_name||"—"}</td>
             <td className="p-2.5">{c.contact_phone||"—"}</td>
             <td className="p-2.5 text-center font-bold" style={{color:G1}}>{sc(c.id)}</td>
+            <td className="p-2.5 text-center">
+              <button onClick={()=>setViewing(c)} style={{color:"#2980B9"}} className="text-xs font-bold hover:underline">📋 History</button>
+            </td>
             {onEdit&&<td className="p-2.5 text-center">
               <button onClick={()=>setEditing({...c})} style={{color:G2}} className="text-xs font-bold hover:underline">✏️ Edit</button>
             </td>}
@@ -729,19 +1384,16 @@ function CustomerList({customers,onAdd,onEdit,monthSales}){
         </tbody>
       </table>
     </div>
-
-    {/* Add modal */}
+    {viewing&&<CustomerHistory customer={viewing} onClose={()=>setViewing(null)} fetchHistory={fetchCustHistory}/>}
     {adding&&<Modal title="New Customer" onClose={()=>setAdding(false)}>
       <InlineCustomerForm onSave={async c=>{await onAdd(c);setAdding(false);}} onCancel={()=>setAdding(false)}/>
     </Modal>}
-
-    {/* Edit modal (admin only) */}
     {editing&&<Modal title={`Edit — ${editing.name}`} onClose={()=>setEditing(null)}>
       <div className="space-y-3">
         <Inp label="Customer Name *" value={editing.name} onChange={v=>setEditing({...editing,name:v})}/>
         <div className="grid grid-cols-2 gap-3">
           <Sel label="Type" value={editing.type||"Supermarket"} onChange={v=>setEditing({...editing,type:v})}>
-            {["Supermarket","Retail Store","Wholesaler"].map(t=><option key={t}>{t}</option>)}
+            {["Supermarket","Retail Store","Wholesaler","End User"].map(t=><option key={t}>{t}</option>)}
           </Sel>
           <Sel label="Zone" value={editing.zone||"South South"} onChange={v=>setEditing({...editing,zone:v})}>
             {["South South","South East","South West","North Central","North East","North West","FCT"].map(z=><option key={z}>{z}</option>)}
@@ -765,6 +1417,7 @@ function CustomerList({customers,onAdd,onEdit,monthSales}){
 function TeamMgmt({team,onAdd,onRemove}){
   const [form,setForm]=useState({name:"",username:"",password:""}); const [err,setErr]=useState(""); const [ok,setOk]=useState(""); const [saving,setSaving]=useState(false);
   const add=async()=>{ if(!form.name||!form.username||!form.password) return setErr("All fields required."); if(team.find(t=>t.username.toLowerCase()===form.username.toLowerCase())) return setErr("Username taken."); setSaving(true); const r=await onAdd({id:uid(),...form}); setSaving(false); if(r){setForm({name:"",username:"",password:""});setErr("");setOk("Added!");setTimeout(()=>setOk(""),2000);}else setErr("Failed."); };
+  const fmtLogin=ts=>{if(!ts) return "Never logged in"; const d=new Date(ts); return d.toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})+" at "+d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});};
   return <div className="max-w-xl mx-auto space-y-4">
     <div className="bg-white rounded-xl shadow p-6"><div className="font-black text-gray-800 mb-4">Add Team Member</div>
       <Inp label="Full Name" value={form.name} onChange={v=>setForm({...form,name:v})} className="mb-3"/>
@@ -775,7 +1428,17 @@ function TeamMgmt({team,onAdd,onRemove}){
     </div>
     <div className="bg-white rounded-xl shadow p-6"><div className="font-black text-gray-800 mb-4">Team ({team.length})</div>
       {team.length===0&&<p className="text-gray-400 text-sm">No members yet.</p>}
-      {team.map(m=><div key={m.id} className="flex items-center justify-between py-3 border-b last:border-0"><div><div className="font-semibold text-sm">{m.name}</div><div className="text-xs text-gray-400">@{m.username}</div></div><button onClick={()=>onRemove(m.id)} className="text-xs text-red-400 hover:text-red-600 font-semibold">Remove</button></div>)}
+      {team.map(m=><div key={m.id} className="flex items-center justify-between py-3 border-b last:border-0">
+        <div>
+          <div className="font-semibold text-sm">{m.name}</div>
+          <div className="text-xs text-gray-400">@{m.username}</div>
+          <div className="flex items-center gap-1 mt-0.5">
+            <span className="text-xs" style={{color:m.last_login?G2:"#ccc"}}>🕐</span>
+            <span className="text-xs" style={{color:m.last_login?"#555":"#ccc"}}>{fmtLogin(m.last_login)}</span>
+          </div>
+        </div>
+        <button onClick={()=>onRemove(m.id)} className="text-xs text-red-400 hover:text-red-600 font-semibold">Remove</button>
+      </div>)}
     </div>
   </div>;
 }
@@ -811,23 +1474,30 @@ function SKUManager({skus,onAdd,onDeactivate}){
 
 // ── Prices & Settings ─────────────────────────────────────────────────────
 function PricesMgmt({cfg,skus,onSave}){
-  const normP=()=>{ const o={}; skus.forEach(s=>{ const p=cfg.prices?.[s.sku]; o[s.sku]=p&&typeof p==="object"?{retail:p.retail||0,wholesale:p.wholesale||0}:{retail:Number(p)||0,wholesale:Number(p)||0}; }); return o; };
+  const normP=()=>{ const o={}; skus.forEach(s=>{ const p=cfg.prices?.[s.sku]; o[s.sku]=p&&typeof p==="object"?{retail:p.retail||0,wholesale:p.wholesale||0,end_user:p.end_user||0}:{retail:Number(p)||0,wholesale:Number(p)||0,end_user:Number(p)||0}; }); return o; };
   const [prices,setPrices]=useState(normP); const [bm,setBm]=useState(cfg.visitBenchmark||5); const [pw,setPw]=useState(cfg.adminPassword); const [saved,setSaved]=useState(false);
   const setTier=(sku,tier,val)=>setPrices(p=>({...p,[sku]:{...p[sku],[tier]:Number(val)}}));
   const save=async()=>{ await onSave({...cfg,prices,visitBenchmark:Number(bm),adminPassword:pw}); setSaved(true); setTimeout(()=>setSaved(false),2000); };
   const cats=[...new Set(skus.map(s=>s.cat))];
-  return <div className="max-w-2xl mx-auto space-y-4">
-    <div className="flex gap-3">
-      <div style={{background:"#EEF7F2",borderColor:G2}} className="flex-1 rounded-xl px-4 py-2.5 border flex items-center gap-2"><span>🏪</span><div><div style={{color:G2}} className="text-xs font-black">Retail Price</div><div className="text-xs text-gray-400">Supermarkets & Retail Stores</div></div></div>
-      <div style={{background:"#FFF8E7",borderColor:AMB}} className="flex-1 rounded-xl px-4 py-2.5 border flex items-center gap-2"><span>🏭</span><div><div style={{color:"#B7800A"}} className="text-xs font-black">Wholesale Price</div><div className="text-xs text-gray-400">Wholesalers & Distributors</div></div></div>
+  return <div className="max-w-3xl mx-auto space-y-4">
+    <div className="flex gap-2 flex-wrap">
+      <div style={{background:"#EEF7F2",borderColor:G2}} className="flex-1 min-w-36 rounded-xl px-3 py-2.5 border flex items-center gap-2"><span>🏪</span><div><div style={{color:G2}} className="text-xs font-black">Retail Price</div><div className="text-xs text-gray-400">Supermarkets & Retail</div></div></div>
+      <div style={{background:"#FFF8E7",borderColor:AMB}} className="flex-1 min-w-36 rounded-xl px-3 py-2.5 border flex items-center gap-2"><span>🏭</span><div><div style={{color:"#B7800A"}} className="text-xs font-black">Wholesale Price</div><div className="text-xs text-gray-400">Wholesalers & Distributors</div></div></div>
+      <div style={{background:"#F5F3FF",borderColor:"#A855F7"}} className="flex-1 min-w-36 rounded-xl px-3 py-2.5 border flex items-center gap-2"><span>👤</span><div><div style={{color:"#6B21A8"}} className="text-xs font-black">End User Price</div><div className="text-xs text-gray-400">Direct / individual buyers</div></div></div>
     </div>
     {cats.map(cat=><div key={cat} className="bg-white rounded-xl shadow p-5">
       <div className="font-bold text-sm mb-2" style={{color:G1}}>{cat}</div>
-      <div className="flex gap-3 mb-2"><div className="flex-1"/><div className="w-36 text-center text-xs font-black" style={{color:G2}}>🏪 Retail (₦)</div><div className="w-36 text-center text-xs font-black" style={{color:"#B7800A"}}>🏭 Wholesale (₦)</div></div>
-      {skus.filter(s=>s.cat===cat).map(s=><div key={s.sku} className="flex items-center gap-3 mb-2.5">
+      <div className="flex gap-2 mb-2">
+        <div className="flex-1"/>
+        <div className="w-28 text-center text-xs font-black" style={{color:G2}}>🏪 Retail (₦)</div>
+        <div className="w-28 text-center text-xs font-black" style={{color:"#B7800A"}}>🏭 Wholesale (₦)</div>
+        <div className="w-28 text-center text-xs font-black" style={{color:"#6B21A8"}}>👤 End User (₦)</div>
+      </div>
+      {skus.filter(s=>s.cat===cat).map(s=><div key={s.sku} className="flex items-center gap-2 mb-2.5">
         <div className="flex-1"><div className="text-xs font-semibold text-gray-700">{s.sku}</div><div className="text-xs text-gray-400">{s.name}</div></div>
-        <div style={{borderColor:G2+"55"}} className="flex items-center border rounded-xl overflow-hidden w-36"><span className="px-2 text-xs text-gray-400 bg-gray-50 border-r py-2">₦</span><input type="number" min="0" value={prices[s.sku]?.retail??""} onChange={e=>setTier(s.sku,"retail",e.target.value)} className="flex-1 p-2 text-sm text-right outline-none w-0"/></div>
-        <div style={{borderColor:AMB+"88"}} className="flex items-center border rounded-xl overflow-hidden w-36"><span className="px-2 text-xs text-gray-400 bg-gray-50 border-r py-2">₦</span><input type="number" min="0" value={prices[s.sku]?.wholesale??""} onChange={e=>setTier(s.sku,"wholesale",e.target.value)} className="flex-1 p-2 text-sm text-right outline-none w-0"/></div>
+        <div style={{borderColor:G2+"55"}} className="flex items-center border rounded-xl overflow-hidden w-28"><span className="px-1.5 text-xs text-gray-400 bg-gray-50 border-r py-2">₦</span><input type="number" min="0" value={prices[s.sku]?.retail??""} onChange={e=>setTier(s.sku,"retail",e.target.value)} className="flex-1 p-1.5 text-sm text-right outline-none w-0"/></div>
+        <div style={{borderColor:AMB+"88"}} className="flex items-center border rounded-xl overflow-hidden w-28"><span className="px-1.5 text-xs text-gray-400 bg-gray-50 border-r py-2">₦</span><input type="number" min="0" value={prices[s.sku]?.wholesale??""} onChange={e=>setTier(s.sku,"wholesale",e.target.value)} className="flex-1 p-1.5 text-sm text-right outline-none w-0"/></div>
+        <div style={{borderColor:"#A855F755"}} className="flex items-center border rounded-xl overflow-hidden w-28"><span className="px-1.5 text-xs text-gray-400 bg-gray-50 border-r py-2">₦</span><input type="number" min="0" value={prices[s.sku]?.end_user??""} onChange={e=>setTier(s.sku,"end_user",e.target.value)} className="flex-1 p-1.5 text-sm text-right outline-none w-0"/></div>
       </div>)}
     </div>)}
     <div className="bg-white rounded-xl shadow p-5"><div className="font-bold text-sm mb-4">Settings</div>
@@ -839,6 +1509,78 @@ function PricesMgmt({cfg,skus,onSave}){
 }
 
 // ── Targets by SKU ────────────────────────────────────────────────────────
+// ── Rep Account — password self-service ──────────────────────────────────
+function RepAccount({user,onChangePassword}){
+  const [curr,setCurr]=useState("");
+  const [next,setNext]=useState("");
+  const [confirm,setConfirm]=useState("");
+  const [err,setErr]=useState("");
+  const [ok,setOk]=useState(false);
+  const [saving,setSaving]=useState(false);
+
+  const valid=curr&&next&&confirm&&next===confirm&&next.length>=6;
+
+  const handle=async()=>{
+    setErr(""); if(!valid) return;
+    if(next!==confirm){setErr("New passwords do not match.");return;}
+    if(next.length<6){setErr("Password must be at least 6 characters.");return;}
+    setSaving(true);
+    const errMsg=await onChangePassword(curr,next);
+    setSaving(false);
+    if(errMsg){setErr(errMsg);}
+    else{setOk(true);setCurr("");setNext("");setConfirm("");}
+  };
+
+  return <div className="max-w-md mx-auto space-y-4">
+    <div className="bg-white rounded-xl shadow p-6">
+      {/* Profile card */}
+      <div style={{background:GL}} className="rounded-xl p-4 mb-5 flex items-center gap-3">
+        <div style={{background:G1,color:"white"}} className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-black flex-shrink-0">
+          {user.name.split(" ").map(n=>n[0]).join("").slice(0,2)}
+        </div>
+        <div>
+          <div className="font-black text-gray-800">{user.name}</div>
+          <div className="text-xs text-gray-400">@{user.username}</div>
+          <div className="text-xs text-gray-400 mt-0.5">Sales Representative</div>
+        </div>
+      </div>
+
+      <div className="font-bold text-sm text-gray-800 mb-4">Change Password</div>
+
+      {ok&&(
+        <div style={{background:"#EEF7F2",borderColor:G2}} className="rounded-xl p-3 mb-4 border flex items-center gap-2">
+          <span>✅</span>
+          <span style={{color:G1}} className="text-sm font-semibold">Password changed successfully.</span>
+        </div>
+      )}
+
+      <Inp label="Current Password" type="password" value={curr} onChange={v=>{setCurr(v);setErr("");setOk(false);}} className="mb-3"/>
+      <Inp label="New Password" type="password" value={next} onChange={v=>{setNext(v);setErr("");setOk(false);}} className="mb-3"/>
+      <Inp label="Confirm New Password" type="password" value={confirm} onChange={v=>{setConfirm(v);setErr("");setOk(false);}} className="mb-4"/>
+
+      {next&&confirm&&next!==confirm&&(
+        <p className="text-red-500 text-xs mb-2">Passwords do not match.</p>
+      )}
+      {next&&next.length>0&&next.length<6&&(
+        <p className="text-amber-600 text-xs mb-2">Password must be at least 6 characters.</p>
+      )}
+      {err&&<p className="text-red-500 text-xs mb-3">{err}</p>}
+
+      <Btn onClick={handle} disabled={!valid||saving} full>{saving?"Saving…":"Update Password"}</Btn>
+    </div>
+
+    <div className="bg-white rounded-xl shadow p-4">
+      <div className="font-semibold text-sm text-gray-700 mb-2">Password tips</div>
+      <ul className="text-xs text-gray-400 space-y-1">
+        <li>▸ Use at least 6 characters</li>
+        <li>▸ Mix letters and numbers for a stronger password</li>
+        <li>▸ Do not share your password with anyone</li>
+        <li>▸ Contact admin if you are locked out</li>
+      </ul>
+    </div>
+  </div>;
+}
+
 function TargetsMgmt({team,targets,skus,onSave,selMonth,selYear}){
   const [local,setLocal]=useState({}); const [saved,setSaved]=useState(false); const [saving,setSaving]=useState(false);
   useEffect(()=>setLocal({...targets}),[targets,selMonth,selYear]);
